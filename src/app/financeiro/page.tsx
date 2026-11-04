@@ -36,19 +36,26 @@ export default function FinanceiroPage() {
   const [busca, setBusca] = useState("");
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
+  // ABA ATIVA (Completa vs Avulsa)
+  const [abaLancamento, setAbaLancamento] = useState<"Completa" | "Avulsa">("Completa");
+
+  // ESTADOS - ABA COMPLETA
   const [tipoManual, setTipoManual] = useState<"Entrada" | "Saída">("Saída");
   const [descManual, setDescManual] = useState("");
-  
   const [empresaParceiraManual, setEmpresaParceiraManual] = useState("");
   const [clienteManual, setClienteManual] = useState("");
-  
   const [cupomManual, setCupomManual] = useState("");
   const [valorEmpresaManual, setValorEmpresaManual] = useState("");
   const [valorSOSManual, setValorSOSManual] = useState("");
-  
   const [statusManual, setStatusManual] = useState<"Pago" | "Em Aberto">("Pago");
   const [formaPgtoManual, setFormaPgtoManual] = useState("");
   const [vencimentoManual, setVencimentoManual] = useState("");
+  
+  // ESTADOS - ABA DESPESA AVULSA
+  const [descAvulsa, setDescAvulsa] = useState("");
+  const [valorAvulsa, setValorAvulsa] = useState("");
+  const [formaPgtoAvulsa, setFormaPgtoAvulsa] = useState("Dinheiro");
+
   const [mensagemManual, setMensagemManual] = useState("");
 
   const totalCalc = formatMoeda(parseMoeda(valorEmpresaManual) + parseMoeda(valorSOSManual));
@@ -113,6 +120,7 @@ export default function FinanceiroPage() {
 
   const imprimirRelatorio = () => window.print();
 
+  // HANDLER: Lançamento Completo (Com divisões e Cupom)
   const handleLancamentoManual = (e: React.FormEvent) => {
     e.preventDefault();
     if (!descManual.trim()) { setMensagemManual("Preencha a descrição."); return; }
@@ -140,13 +148,36 @@ export default function FinanceiroPage() {
     const novaLista = [nova, ...transacoes];
     setTransacoes(novaLista); localStorage.setItem("financeiro_cadastrado", JSON.stringify(novaLista));
     
-    setDescManual(""); 
-    setEmpresaParceiraManual("");
-    setClienteManual(""); 
-    setCupomManual("");
+    setDescManual(""); setEmpresaParceiraManual(""); setClienteManual(""); setCupomManual("");
     setValorEmpresaManual(""); setValorSOSManual(""); 
     setStatusManual("Pago"); setVencimentoManual(""); setFormaPgtoManual("");
-    setMensagemManual("Lançamento efetuado com sucesso!"); setTimeout(() => setMensagemManual(""), 3000);
+    setMensagemManual("Lançamento registado com sucesso!"); setTimeout(() => setMensagemManual(""), 3000);
+  };
+
+  // HANDLER: Lançamento Despesa Avulsa (Rápida)
+  const handleDespesaAvulsa = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!descAvulsa.trim() || parseMoeda(valorAvulsa) === 0) {
+      setMensagemManual("Preencha a descrição e o valor da despesa."); return;
+    }
+
+    const nova: Transacao = {
+      id: Date.now(),
+      tipo: "Saída",
+      descricao: descAvulsa.trim(),
+      clienteNome: "Despesa Avulsa / Interna",
+      valor: formatMoeda(parseMoeda(valorAvulsa)),
+      formaPagamento: formaPgtoAvulsa,
+      status: "Pago", // Despesas avulsas são dadas como pagas na hora
+      dataVencimento: "",
+      dataCriacao: new Date().toLocaleDateString("pt-BR")
+    };
+
+    const novaLista = [nova, ...transacoes];
+    setTransacoes(novaLista); localStorage.setItem("financeiro_cadastrado", JSON.stringify(novaLista));
+
+    setDescAvulsa(""); setValorAvulsa(""); setFormaPgtoAvulsa("Dinheiro");
+    setMensagemManual("Despesa avulsa adicionada ao sistema!"); setTimeout(() => setMensagemManual(""), 3000);
   };
 
   const iniciarBaixa = (t: Transacao) => { setBaixandoId(t.id); setFormaPgtoBaixa(t.formaPagamento || ""); setStatusBaixa(t.status || "Pago"); setVencimentoBaixa(t.dataVencimento || ""); };
@@ -168,8 +199,10 @@ export default function FinanceiroPage() {
 
   const apagarTransacao = (id: number) => { if (window.confirm("Apagar registo? Isso alterará o saldo.")) { const novaLista = transacoes.filter(t => t.id !== id); setTransacoes(novaLista); localStorage.setItem("financeiro_cadastrado", JSON.stringify(novaLista)); } };
 
+  // MATEMÁTICA AUTOMÁTICA GERAL
   const faturamentoTotal = transacoes.filter(t => t.tipo === "Entrada" && t.status === "Pago").reduce((a, t) => a + parseMoeda(t.valor), 0);
   const aReceber = transacoes.filter(t => t.tipo === "Entrada" && t.status === "Em Aberto").reduce((a, t) => a + parseMoeda(t.valor), 0);
+  // Todas as saídas "Pagas" (incluindo as avulsas) somam aqui e deduzem o saldo líquido.
   const despesasPagas = transacoes.filter(t => t.tipo === "Saída" && t.status === "Pago").reduce((a, t) => a + parseMoeda(t.valor), 0);
   const aPagar = transacoes.filter(t => t.tipo === "Saída" && t.status === "Em Aberto").reduce((a, t) => a + parseMoeda(t.valor), 0);
   const saldoLiquido = faturamentoTotal - despesasPagas;
@@ -304,7 +337,7 @@ export default function FinanceiroPage() {
         </button>
       </div>
 
-      {/* CABEÇALHO DE IMPRESSÃO CENTRALIZADO (APARECE SÓ NO PAPEL) */}
+      {/* CABEÇALHO DE IMPRESSÃO CENTRALIZADO */}
       <div className="hidden print:flex flex-col items-center border-b-2 border-black pb-4 mb-6 text-center w-full">
         {logoUrl ? (
           <img src={logoUrl} alt="Logo" className="h-24 object-contain mb-2" />
@@ -312,7 +345,6 @@ export default function FinanceiroPage() {
           <h1 className="text-3xl font-black uppercase tracking-tight mb-2 text-black">SOS CASA DE PRAIA</h1>
         )}
         
-        {/* NOVO BLOCO CNPJ E TELEFONE */}
         <div className="text-[11px] font-bold text-gray-700 mb-4 bg-gray-100 px-4 py-1.5 rounded-full border border-gray-300 print:border-black">
           CNPJ: 38.250.620.0001-07 | Contato / WhatsApp: (13) 98131-1644
         </div>
@@ -469,89 +501,135 @@ export default function FinanceiroPage() {
         </div>
       )}
 
-      {/* NOVO FORMULÁRIO MANUAL AVANÇADO (LIDA COM CUPOM E VALORES DIVIDIDOS) */}
+      {/* BLOCO MANUAL DE REGISTO COM ABAS */}
       <div className="print:hidden bg-[#111827] border border-slate-800 rounded-lg p-4 shadow-sm">
-        <h2 className="text-blue-500 text-sm font-bold mb-3 uppercase tracking-wider flex items-center gap-2">
-          + Registrar Transação, Negociação ou Cupom
-        </h2>
-        <form onSubmit={handleLancamentoManual} className="flex flex-col gap-2.5">
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5">
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Tipo *</label>
-              <select value={tipoManual} onChange={(e) => setTipoManual(e.target.value as "Entrada"|"Saída")} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none focus:border-blue-500">
-                <option value="Entrada">🟢 Entrada (Receita / Cliente)</option>
-                <option value="Saída">🔴 Saída (Despesa / Dívida)</option>
-              </select>
-            </div>
-            <div className="lg:col-span-3">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Descrição do Acordo / Serviço *</label>
-              <input type="text" value={descManual} onChange={(e) => setDescManual(e.target.value)} placeholder="Ex: Serviço executado" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
-            </div>
-            <div className="lg:col-span-3">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Empresa Parceira</label>
-              <input type="text" value={empresaParceiraManual} onChange={(e) => setEmpresaParceiraManual(e.target.value)} placeholder="Ex: PPA" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
-            </div>
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Cliente</label>
-              <input type="text" value={clienteManual} onChange={(e) => setClienteManual(e.target.value)} placeholder="Ex: Maurício" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
-            </div>
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Nº Cupom / NF</label>
-              <input type="text" value={cupomManual} onChange={(e) => setCupomManual(e.target.value)} placeholder="Ex: 12345" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-blue-300 font-mono w-full outline-none focus:border-blue-500" />
-            </div>
-          </div>
-          
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5 bg-slate-900/50 p-3 rounded-md border border-slate-800">
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Valor Empresa/Nota</label>
-              <input type="text" value={valorEmpresaManual} onChange={(e) => setValorEmpresaManual(e.target.value)} placeholder="0,00" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
-            </div>
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Valor SOS Casa de Praia</label>
-              <input type="text" value={valorSOSManual} onChange={(e) => setValorSOSManual(e.target.value)} placeholder="0,00" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
-            </div>
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Total Calculado</label>
-              <input type="text" value={totalCalc} readOnly className="bg-black/40 border border-slate-700 rounded-md py-1.5 px-3 text-xs text-green-400 font-bold w-full outline-none cursor-not-allowed" />
-            </div>
+        
+        {/* NAVEGAÇÃO DAS ABAS */}
+        <div className="flex gap-4 mb-5 border-b border-slate-800 pb-2">
+          <button 
+            onClick={() => setAbaLancamento("Completa")} 
+            className={`text-[11px] font-bold uppercase tracking-wider pb-2 border-b-2 transition-colors ${abaLancamento === "Completa" ? "text-blue-400 border-blue-500" : "text-slate-500 border-transparent hover:text-slate-400"}`}
+          >
+            📝 Negociação / Cupom
+          </button>
+          <button 
+            onClick={() => setAbaLancamento("Avulsa")} 
+            className={`text-[11px] font-bold uppercase tracking-wider pb-2 border-b-2 transition-colors ${abaLancamento === "Avulsa" ? "text-red-400 border-red-500" : "text-slate-500 border-transparent hover:text-slate-400"}`}
+          >
+            ☕ Despesa Rápida (Avulsa)
+          </button>
+        </div>
 
-            <div className="lg:col-span-2">
-              <label className="block text-[11px] font-medium text-slate-400 mb-1">Situação *</label>
-              <select value={statusManual} onChange={(e) => setStatusManual(e.target.value as "Pago"|"Em Aberto")} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs font-bold text-slate-200 w-full outline-none focus:border-blue-500">
-                <option value="Pago">✅ Efetivado / Pago</option>
-                <option value="Em Aberto">⏳ Ficar Pendente</option>
-              </select>
-            </div>
-            
-            {statusManual === "Em Aberto" ? (
+        {/* FORMULÁRIO COMPLETO */}
+        {abaLancamento === "Completa" && (
+          <form onSubmit={handleLancamentoManual} className="flex flex-col gap-2.5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5">
               <div className="lg:col-span-2">
-                <label className="block text-[11px] font-medium text-slate-400 mb-1">Vencimento *</label>
-                <input type="date" value={vencimentoManual} onChange={(e) => setVencimentoManual(e.target.value)} className="bg-[#0b0f19] border border-amber-900/50 rounded-md py-1.5 px-3 text-xs text-amber-400 w-full outline-none focus:border-amber-500" />
-              </div>
-            ) : (
-              <div className="lg:col-span-2">
-                <label className="block text-[11px] font-medium text-slate-400 mb-1">Forma de Pagamento</label>
-                <select value={formaPgtoManual} onChange={(e) => setFormaPgtoManual(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none focus:border-blue-500">
-                  <option value="">Selecione...</option>
-                  <option value="Cartão de Crédito">Cartão de Crédito</option>
-                  <option value="Cartão de Débito">Cartão de Débito</option>
-                  <option value="Pix">Pix</option>
-                  <option value="Dinheiro">Dinheiro</option>
-                  <option value="Cupom Fiscal (Empresa)">Cupom Fiscal (Baixa Empresa)</option>
-                  <option value="Abatimento (Crédito)">Abatimento (Crédito / Permuta)</option>
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Tipo *</label>
+                <select value={tipoManual} onChange={(e) => setTipoManual(e.target.value as "Entrada"|"Saída")} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none focus:border-blue-500">
+                  <option value="Entrada">🟢 Entrada (Receita)</option>
+                  <option value="Saída">🔴 Saída (Despesa)</option>
                 </select>
               </div>
-            )}
-            
-            <div className="lg:col-span-2 flex items-end">
-              <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold py-2 rounded-md transition-colors uppercase tracking-wider">
-                Registrar
-              </button>
+              <div className="lg:col-span-3">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Descrição do Acordo / Serviço *</label>
+                <input type="text" value={descManual} onChange={(e) => setDescManual(e.target.value)} placeholder="Ex: Serviço executado" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
+              </div>
+              <div className="lg:col-span-3">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Empresa Parceira</label>
+                <input type="text" value={empresaParceiraManual} onChange={(e) => setEmpresaParceiraManual(e.target.value)} placeholder="Ex: PPA" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Cliente</label>
+                <input type="text" value={clienteManual} onChange={(e) => setClienteManual(e.target.value)} placeholder="Ex: Maurício" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Nº Cupom / NF</label>
+                <input type="text" value={cupomManual} onChange={(e) => setCupomManual(e.target.value)} placeholder="Ex: 12345" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-blue-300 font-mono w-full outline-none focus:border-blue-500" />
+              </div>
             </div>
-          </div>
-          {mensagemManual && <div className="text-green-400 text-[11px] font-bold mt-1 text-center bg-green-950/40 py-1 rounded">{mensagemManual}</div>}
-        </form>
+            
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-12 gap-2.5 bg-slate-900/50 p-3 rounded-md border border-slate-800">
+              <div className="lg:col-span-2">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Valor Empresa/Nota</label>
+                <input type="text" value={valorEmpresaManual} onChange={(e) => setValorEmpresaManual(e.target.value)} placeholder="0,00" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Valor SOS Casa de Praia</label>
+                <input type="text" value={valorSOSManual} onChange={(e) => setValorSOSManual(e.target.value)} placeholder="0,00" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none focus:border-blue-500" />
+              </div>
+              <div className="lg:col-span-2">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Total Calculado</label>
+                <input type="text" value={totalCalc} readOnly className="bg-black/40 border border-slate-700 rounded-md py-1.5 px-3 text-xs text-green-400 font-bold w-full outline-none cursor-not-allowed" />
+              </div>
+
+              <div className="lg:col-span-2">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Situação *</label>
+                <select value={statusManual} onChange={(e) => setStatusManual(e.target.value as "Pago"|"Em Aberto")} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs font-bold text-slate-200 w-full outline-none focus:border-blue-500">
+                  <option value="Pago">✅ Efetivado / Pago</option>
+                  <option value="Em Aberto">⏳ Ficar Pendente</option>
+                </select>
+              </div>
+              
+              {statusManual === "Em Aberto" ? (
+                <div className="lg:col-span-2">
+                  <label className="block text-[11px] font-medium text-slate-400 mb-1">Vencimento *</label>
+                  <input type="date" value={vencimentoManual} onChange={(e) => setVencimentoManual(e.target.value)} className="bg-[#0b0f19] border border-amber-900/50 rounded-md py-1.5 px-3 text-xs text-amber-400 w-full outline-none focus:border-amber-500" />
+                </div>
+              ) : (
+                <div className="lg:col-span-2">
+                  <label className="block text-[11px] font-medium text-slate-400 mb-1">Forma de Pagamento</label>
+                  <select value={formaPgtoManual} onChange={(e) => setFormaPgtoManual(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none focus:border-blue-500">
+                    <option value="">Selecione...</option>
+                    <option value="Cartão de Crédito">Cartão de Crédito</option>
+                    <option value="Cartão de Débito">Cartão de Débito</option>
+                    <option value="Pix">Pix</option>
+                    <option value="Dinheiro">Dinheiro</option>
+                    <option value="Cupom Fiscal (Empresa)">Cupom Fiscal (Baixa Empresa)</option>
+                    <option value="Abatimento (Crédito)">Abatimento (Crédito / Permuta)</option>
+                  </select>
+                </div>
+              )}
+              
+              <div className="lg:col-span-2 flex items-end">
+                <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white text-[11px] font-bold py-2 rounded-md transition-colors uppercase tracking-wider">
+                  Registrar
+                </button>
+              </div>
+            </div>
+            {mensagemManual && abaLancamento === "Completa" && <div className="text-green-400 text-[11px] font-bold mt-1 text-center bg-green-950/40 py-1 rounded">{mensagemManual}</div>}
+          </form>
+        )}
+
+        {/* FORMULÁRIO DESPESA AVULSA */}
+        {abaLancamento === "Avulsa" && (
+          <form onSubmit={handleDespesaAvulsa} className="flex flex-col gap-3 bg-red-950/20 p-4 rounded-md border border-red-900/30">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="sm:col-span-1">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">O que foi gasto? *</label>
+                <input type="text" value={descAvulsa} onChange={e => setDescAvulsa(e.target.value)} placeholder="Ex: Gasolina, Almoço, Pedágio" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 w-full outline-none focus:border-red-500" />
+              </div>
+              <div className="sm:col-span-1">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Valor Gasto (R$) *</label>
+                <input type="text" value={valorAvulsa} onChange={e => setValorAvulsa(e.target.value)} placeholder="Ex: 50,00" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-red-400 font-bold w-full outline-none focus:border-red-500" />
+              </div>
+              <div className="sm:col-span-1">
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Como foi pago?</label>
+                <select value={formaPgtoAvulsa} onChange={e => setFormaPgtoAvulsa(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 w-full outline-none focus:border-red-500">
+                  <option value="Dinheiro">Dinheiro</option>
+                  <option value="Pix">Pix</option>
+                  <option value="Cartão de Crédito">Cartão de Crédito</option>
+                  <option value="Cartão de Débito">Cartão de Débito</option>
+                </select>
+              </div>
+            </div>
+            
+            <button type="submit" className="w-full sm:w-auto self-end px-6 bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold py-2 rounded-md transition-colors uppercase tracking-wider mt-1 shadow-md">
+              Lançar Despesa Imediata
+            </button>
+            {mensagemManual && abaLancamento === "Avulsa" && <div className="text-green-400 text-[11px] font-bold mt-1 text-center bg-green-950/40 py-1 rounded">{mensagemManual}</div>}
+          </form>
+        )}
       </div>
 
       {/* HISTÓRICO E GESTÃO DE DÍVIDAS */}
@@ -573,7 +651,7 @@ export default function FinanceiroPage() {
         ) : (
           <div className="flex flex-col gap-2 print:gap-0 print:border-t print:border-slate-300">
             {transacoesFiltradas.map(t => (
-              <div key={t.id} className="bg-[#0b0f19] print:bg-white border border-slate-800 print:border-b print:border-slate-300 print:border-x-0 print:border-t-0 p-3 rounded-md flex flex-col gap-3 print:gap-1 hover:border-slate-700 transition-colors">
+              <div key={t.id} className={`bg-[#0b0f19] print:bg-white border p-3 rounded-md flex flex-col gap-3 print:gap-1 transition-colors ${t.clienteNome === "Despesa Avulsa / Interna" ? "border-red-900/30 hover:border-red-900/60" : "border-slate-800 print:border-b print:border-slate-300 print:border-x-0 print:border-t-0 hover:border-slate-700"}`}>
                 
                 <div className="flex justify-between items-start">
                   <div className="flex items-start gap-3">

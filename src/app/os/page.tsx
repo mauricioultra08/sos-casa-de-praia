@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-interface Cliente { id: number; nome: string; }
+// Interface do Cliente atualizada com Email e CNPJ/CPF
+interface Cliente { id: number; nome: string; telefone?: string; email?: string; cnpjCpf?: string; }
 interface Tecnico { id: number; nome: string; status: string; }
 interface OrdemServico {
   id: number;
@@ -29,7 +30,9 @@ export default function OSPage() {
 
   const [clienteId, setClienteId] = useState("");
   const [tecnicoId, setTecnicoId] = useState("");
-  const [descricao, setDescricao] = useState("");
+  const [servicoExecutar, setServicoExecutar] = useState("");
+  const [materiaisLevar, setMateriaisLevar] = useState("");
+  
   const [mensagem, setMensagem] = useState("");
   const [busca, setBusca] = useState("");
 
@@ -62,13 +65,19 @@ export default function OSPage() {
 
   const handleGerarOSManual = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!clienteId || !tecnicoId || !descricao.trim()) {
-      setMensagem("Selecione o Cliente, Técnico e preencha a descrição.");
+    if (!clienteId || !tecnicoId || !servicoExecutar.trim()) {
+      setMensagem("Selecione o Cliente, Técnico e o Serviço a ser executado.");
       return;
     }
 
     const clienteSelecionado = clientes.find(c => c.id === Number(clienteId));
     const tecnicoSelecionado = tecnicos.find(t => t.id === Number(tecnicoId));
+
+    let descFormatada = "";
+    if (materiaisLevar.trim()) {
+      descFormatada += "MATERIAIS A LEVAR:\n" + materiaisLevar.trim() + "\n\n";
+    }
+    descFormatada += "SERVIÇO A SER EXECUTADO:\n" + servicoExecutar.trim();
 
     const novaOS: OrdemServico = {
       id: Date.now(),
@@ -76,7 +85,7 @@ export default function OSPage() {
       clienteNome: clienteSelecionado?.nome || "Desconhecido",
       tecnicoId: Number(tecnicoId),
       tecnicoNome: tecnicoSelecionado?.nome || "Desconhecido",
-      descricao: descricao.trim(),
+      descricao: descFormatada,
       status: "Aprovada",
       dataCriacao: new Date().toLocaleDateString("pt-BR")
     };
@@ -86,7 +95,7 @@ export default function OSPage() {
     localStorage.setItem("ordens_servico", JSON.stringify(novasOrdens));
 
     setMensagem("Ordem de Serviço manual gerada com sucesso!");
-    setClienteId(""); setTecnicoId(""); setDescricao("");
+    setClienteId(""); setTecnicoId(""); setServicoExecutar(""); setMateriaisLevar("");
     setTimeout(() => setMensagem(""), 3000);
   };
 
@@ -119,6 +128,9 @@ export default function OSPage() {
     os.id.toString().includes(busca)
   );
 
+  // Busca os dados atualizados do cliente na hora de imprimir
+  const clienteImpressao = osParaImprimir ? clientes.find(c => c.id === osParaImprimir.clienteId) : null;
+
   if (!montado) return <div className="w-full text-center py-12 text-slate-500 text-sm">A carregar OS...</div>;
 
   return (
@@ -134,22 +146,27 @@ export default function OSPage() {
         {/* FORMULÁRIO MANUAL OCULTO OU COMPACTO */}
         <div className="bg-[#111827] border border-slate-800 rounded-lg p-4 shadow-sm">
           <h2 className="text-slate-400 text-xs font-bold mb-3 uppercase tracking-wider flex items-center gap-2">
-            + Gerar OS Manualmente (Opcional)
+            + Gerar OS Manualmente (Avulsa)
           </h2>
           <form onSubmit={handleGerarOSManual} className="flex flex-col gap-2.5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
-              <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200">
+              <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 outline-none focus:border-blue-500">
                 <option value="">Selecione um cliente...</option>
                 {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
               </select>
-              <select value={tecnicoId} onChange={(e) => setTecnicoId(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200">
+              <select value={tecnicoId} onChange={(e) => setTecnicoId(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 outline-none focus:border-blue-500">
                 <option value="">Selecione o técnico...</option>
                 {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
               </select>
             </div>
-            <textarea value={descricao} onChange={(e) => setDescricao(e.target.value)} rows={2} placeholder="Serviço e Materiais (Sem Valores)..." className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 resize-none"></textarea>
+            
+            <div className="grid grid-cols-1 gap-2.5">
+              <textarea value={servicoExecutar} onChange={(e) => setServicoExecutar(e.target.value)} rows={2} placeholder="Descreva o Serviço a ser executado *" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 resize-none outline-none focus:border-blue-500"></textarea>
+              <textarea value={materiaisLevar} onChange={(e) => setMateriaisLevar(e.target.value)} rows={2} placeholder="Materiais a levar (Opcional)" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 resize-none outline-none focus:border-blue-500"></textarea>
+            </div>
+
             <button type="submit" className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-2 rounded-md transition-colors uppercase">Gerar OS Manual</button>
-            {mensagem && <div className="text-green-400 text-xs mt-1 text-center">{mensagem}</div>}
+            {mensagem && <div className={`text-xs mt-1 text-center ${mensagem.includes("Selecione") ? "text-red-400" : "text-green-400"}`}>{mensagem}</div>}
           </form>
         </div>
 
@@ -231,7 +248,6 @@ export default function OSPage() {
               ) : (
                 <h1 className="text-3xl font-black uppercase tracking-tight mb-2">SOS CASA DE PRAIA</h1>
               )}
-              {/* NOVO BLOCO CNPJ E TELEFONE */}
               <div className="text-[11px] font-bold text-gray-700 mb-4 bg-gray-100 px-4 py-1.5 rounded-full border border-gray-300 print:border-black">
                 CNPJ: 38.250.620.0001-07 | Contato / WhatsApp: (13) 98131-1644
               </div>
@@ -247,6 +263,15 @@ export default function OSPage() {
               <div className="bg-gray-100 p-3 rounded border border-gray-300">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Cliente</p>
                 <p className="text-lg font-bold uppercase">{osParaImprimir.clienteNome}</p>
+
+                {/* NOVO BLOCO: Mostra os dados do cliente se existirem */}
+                {clienteImpressao && (clienteImpressao.telefone || clienteImpressao.cnpjCpf || clienteImpressao.email) && (
+                  <div className="mt-2 pt-2 border-t border-gray-300 text-sm text-gray-700 flex flex-col gap-0.5">
+                    {clienteImpressao.telefone && <p><span className="font-bold text-gray-900">Tel:</span> {clienteImpressao.telefone}</p>}
+                    {clienteImpressao.cnpjCpf && <p><span className="font-bold text-gray-900">Doc:</span> {clienteImpressao.cnpjCpf}</p>}
+                    {clienteImpressao.email && <p><span className="font-bold text-gray-900">Email:</span> {clienteImpressao.email}</p>}
+                  </div>
+                )}
               </div>
               <div className="bg-gray-100 p-3 rounded border border-gray-300">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Técnico</p>

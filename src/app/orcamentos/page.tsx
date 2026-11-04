@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
-interface Cliente { id: number; nome: string; telefone?: string; }
+// Interface do Cliente atualizada com Email e CNPJ/CPF
+interface Cliente { id: number; nome: string; telefone?: string; email?: string; cnpjCpf?: string; }
 interface Tecnico { id: number; nome: string; status: string; }
 interface Produto { id: number; nome: string; quantidade: string; precoVenda: string; }
 
@@ -27,7 +28,6 @@ interface Orcamento {
   dataCriacao: string;
 }
 
-// Interface alinhada com a página de OS
 interface OrdemServico {
   id: number;
   orcamentoId?: number;
@@ -70,6 +70,7 @@ export default function OrcamentosPage() {
   const [tecnicoSelecionadoId, setTecnicoSelecionadoId] = useState("");
   const [dataAgendamento, setDataAgendamento] = useState("");
   const [horaAgendamento, setHoraAgendamento] = useState("");
+  const [descricaoServicoOS, setDescricaoServicoOS] = useState("");
 
   const [orcParaImprimir, setOrcParaImprimir] = useState<Orcamento | null>(null);
 
@@ -155,40 +156,49 @@ export default function OrcamentosPage() {
     }
   };
 
-  const iniciarAprovacao = (id: number) => { setOrcamentoAprovandoId(id); setTecnicoSelecionadoId(""); setDataAgendamento(""); setHoraAgendamento(""); };
+  const iniciarAprovacao = (id: number) => { 
+    setOrcamentoAprovandoId(id); 
+    setTecnicoSelecionadoId(""); 
+    setDataAgendamento(""); 
+    setHoraAgendamento(""); 
+    setDescricaoServicoOS(""); 
+  };
 
   const confirmarAprovacaoEGerarOS = (orcamento: Orcamento) => {
-    if (!tecnicoSelecionadoId || !dataAgendamento || !horaAgendamento) { alert("Por favor, selecione o técnico, a data e o horário da instalação."); return; }
+    if (!tecnicoSelecionadoId || !dataAgendamento || !horaAgendamento || !descricaoServicoOS.trim()) { 
+      alert("Por favor, preencha o serviço a executar, técnico, data e horário."); 
+      return; 
+    }
     const tecnicoSelecionado = tecnicos.find(t => t.id === Number(tecnicoSelecionadoId));
 
-    let descricaoLimpa = "MATERIAIS A LEVAR:\n";
-    let estoqueAtualizado = [...produtos]; // Cópia do estoque atual para abater
+    let descricaoLimpa = "";
+    let estoqueAtualizado = [...produtos];
 
     if (orcamento.itens && orcamento.itens.length > 0) {
+      descricaoLimpa += "MATERIAIS A LEVAR:\n";
       descricaoLimpa += orcamento.itens.map(i => `- ${i.qtd}x ${i.nome}`).join("\n");
       
-      // SISTEMA DE BAIXA DE ESTOQUE AUTOMÁTICA
       orcamento.itens.forEach(itemOrcado => {
         estoqueAtualizado = estoqueAtualizado.map(prod => {
           if (prod.id === itemOrcado.produtoId) {
             const qtdAtual = parseInt(prod.quantidade) || 0;
-            const novaQtd = Math.max(0, qtdAtual - itemOrcado.qtd); // Garante que não fica negativo
+            const novaQtd = Math.max(0, qtdAtual - itemOrcado.qtd);
             return { ...prod, quantidade: String(novaQtd) };
           }
           return prod;
         });
       });
       
-      // Atualiza o state e o banco local de produtos/estoque
       setProdutos(estoqueAtualizado);
       localStorage.setItem("estoque_cadastrado", JSON.stringify(estoqueAtualizado));
-      
-    } else { 
-      descricaoLimpa += "Nenhum material registrado no sistema."; 
     }
     
-    descricaoLimpa += "\n\nSERVIÇO / OBSERVAÇÃO:\n";
-    descricaoLimpa += orcamento.descricaoObs || "Instalação padrão.";
+    descricaoLimpa += (descricaoLimpa ? "\n\n" : "") + "SERVIÇO A SER EXECUTADO:\n";
+    descricaoLimpa += descricaoServicoOS.trim();
+
+    if (orcamento.descricaoObs) {
+      descricaoLimpa += "\n\nOBSERVAÇÕES DO ORÇAMENTO:\n" + orcamento.descricaoObs;
+    }
 
     const novaOS: OrdemServico = {
       id: Date.now() + 1,
@@ -232,6 +242,9 @@ export default function OrcamentosPage() {
     orc.status.toLowerCase().includes(busca.toLowerCase()) ||
     orc.id.toString().includes(busca)
   );
+
+  // Busca os dados atualizados do cliente na hora de imprimir
+  const clienteImpressao = orcParaImprimir ? clientes.find(c => c.id === orcParaImprimir.clienteId) : null;
 
   if (!montado) return <div className="w-full text-center py-12 text-slate-500 text-sm">A carregar Orçamentos...</div>;
 
@@ -378,7 +391,19 @@ export default function OrcamentosPage() {
 
                   {orcamentoAprovandoId === orc.id && (
                     <div className="mt-2 p-3 bg-slate-900 border border-blue-900/50 rounded-md flex flex-col gap-3">
-                      <p className="text-[11px] text-blue-400 font-bold">Orçamento Aprovado! Defina data/hora e técnico para despachar a OS:</p>
+                      <p className="text-[11px] text-blue-400 font-bold">Orçamento Aprovado! Defina os detalhes para despachar a OS:</p>
+                      
+                      <div>
+                        <label className="block text-[10px] text-slate-400 mb-1">Serviço a ser executado pelo Técnico *</label>
+                        <textarea 
+                          value={descricaoServicoOS} 
+                          onChange={(e) => setDescricaoServicoOS(e.target.value)} 
+                          rows={2} 
+                          placeholder="Ex: Fazer a instalação de 2 câmeras, passar cabo pela tubulação..." 
+                          className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-2 text-xs text-slate-200 w-full outline-none resize-none focus:border-blue-500" 
+                        />
+                      </div>
+
                       <div className="grid grid-cols-2 gap-2">
                         <div>
                           <label className="block text-[10px] text-slate-400 mb-1">Data *</label>
@@ -417,7 +442,6 @@ export default function OrcamentosPage() {
               ) : (
                 <h1 className="text-3xl font-black uppercase tracking-tight mb-2">SOS CASA DE PRAIA</h1>
               )}
-              {/* NOVO BLOCO CNPJ E TELEFONE */}
               <div className="text-[11px] font-bold text-gray-700 mb-4 bg-gray-100 px-4 py-1.5 rounded-full border border-gray-300 print:border-black">
                 CNPJ: 38.250.620.0001-07 | Contato / WhatsApp: (13) 98131-1644
               </div>
@@ -430,6 +454,15 @@ export default function OrcamentosPage() {
               <div className="bg-gray-100 p-3 rounded border border-gray-300">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Cliente</p>
                 <p className="text-lg font-bold uppercase">{orcParaImprimir.clienteNome}</p>
+                
+                {/* NOVO BLOCO: Mostra os dados do cliente se existirem */}
+                {clienteImpressao && (clienteImpressao.telefone || clienteImpressao.cnpjCpf || clienteImpressao.email) && (
+                  <div className="mt-2 pt-2 border-t border-gray-300 text-sm text-gray-700 flex flex-col gap-0.5">
+                    {clienteImpressao.telefone && <p><span className="font-bold text-gray-900">Tel:</span> {clienteImpressao.telefone}</p>}
+                    {clienteImpressao.cnpjCpf && <p><span className="font-bold text-gray-900">Doc:</span> {clienteImpressao.cnpjCpf}</p>}
+                    {clienteImpressao.email && <p><span className="font-bold text-gray-900">Email:</span> {clienteImpressao.email}</p>}
+                  </div>
+                )}
               </div>
               <div className="border-b border-gray-300 pb-2 flex flex-col justify-end">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Data de Emissão</p>

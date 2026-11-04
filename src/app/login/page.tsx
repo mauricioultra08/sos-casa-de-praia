@@ -1,146 +1,181 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../lib/supabase";
 
 export default function LoginPage() {
-  const [codigo, setCodigo] = useState("");
-  const [erro, setErro] = useState("");
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const router = useRouter();
+  
+  // Controlo de abas: Admin (Master) vs Técnico
+  const [tipoLogin, setTipoLogin] = useState<"admin" | "tecnico">("admin");
 
-  useEffect(() => {
-    const logoSalva = localStorage.getItem("app_logo");
-    if (logoSalva) setLogoUrl(logoSalva);
-    
-    const usuarioStr = localStorage.getItem("usuario_logado");
-    if (usuarioStr) {
-      const usuario = JSON.parse(usuarioStr);
-      if (usuario.tipo === "admin") router.push("/");
-      else router.push("/app-tecnico");
-    }
-  }, [router]);
+  // Estado Master
+  const [pinMaster, setPinMaster] = useState("");
 
-  const handleLogin = async (e: React.FormEvent) => {
+  // Estados Técnico
+  const [nomeTecnico, setNomeTecnico] = useState("");
+  const [pinTecnico, setPinTecnico] = useState("");
+
+  const [mensagem, setMensagem] = useState("");
+  const [erro, setErro] = useState("");
+
+  const handleLoginAdmin = (e: React.FormEvent) => {
     e.preventDefault();
     setErro("");
+    setMensagem("");
 
-    const senhaLimpa = codigo.trim();
+    // LOGIN MASTER: Lê o PIN dinâmico que o Master salvou (ou 123456 como fábrica)
+    const pinCorreto = localStorage.getItem("pin_master") || "123456";
 
-    if (!senhaLimpa) {
-      setErro("Por favor, insira o seu código de acesso.");
+    if (pinMaster === pinCorreto) {
+      const adminLogado = { id: 0, nome: "Master", tipo: "admin" };
+      localStorage.setItem("usuario_logado", JSON.stringify(adminLogado));
+      
+      setMensagem("Acesso Master autorizado!");
+      setTimeout(() => router.push("/"), 800);
+    } else {
+      setErro("PIN Master incorreto.");
+    }
+  };
+
+  const handleLoginTecnico = (e: React.FormEvent) => {
+    e.preventDefault();
+    setErro("");
+    setMensagem("");
+
+    if (!nomeTecnico.trim() || !pinTecnico.trim()) {
+      setErro("Preencha o seu nome e o seu PIN.");
       return;
     }
 
-    // 1. Verificação Master (oculta nos bastidores)
-    if (senhaLimpa === "MASTER2026") {
-      localStorage.setItem("usuario_logado", JSON.stringify({ tipo: "admin", nome: "Master" }));
-      router.push("/");
+    const tecsSalvos = localStorage.getItem("tecnicos_cadastrados");
+    
+    if (!tecsSalvos) {
+      setErro("Nenhum técnico cadastrado no sistema ainda.");
       return;
     }
 
-    // 2. Verificação de Técnicos no Supabase + Fallback LocalStorage
-    try {
-      const { data: tecnicosNuvem, error } = await supabase
-        .from("tecnicos")
-        .select("*");
+    const tecnicos = JSON.parse(tecsSalvos);
+    
+    // Verifica se existe um técnico com aquele nome (ignorando maiúsculas) e com o mesmo PIN
+    const tecEncontrado = tecnicos.find((t: any) => 
+      t.nome.toLowerCase().includes(nomeTecnico.toLowerCase().trim()) && 
+      t.senhaAcesso === pinTecnico.trim()
+    );
 
-      if (error) {
-        console.error("Erro ao consultar técnicos:", error);
-        setErro(`Erro na nuvem: ${error.message}`);
+    if (tecEncontrado) {
+      if (tecEncontrado.status === "Inativo") {
+        setErro("O seu acesso encontra-se inativo. Fale com a administração.");
         return;
       }
 
-      // Junta os técnicos do Supabase com os que estiverem salvos localmente no navegador
-      const tecnicosLocalStr = localStorage.getItem("tecnicos") || localStorage.getItem("app_tecnicos") || "[]";
-      let tecnicosLocal: any[] = [];
-      try {
-        tecnicosLocal = JSON.parse(tecnicosLocalStr);
-      } catch {}
-
-      const todosTecnicos = [...(tecnicosNuvem || []), ...(Array.isArray(tecnicosLocal) ? tecnicosLocal : [])];
-
-      const tecnico = todosTecnicos.find(
-        (t: any) =>
-          String(t.senha || "").trim().toLowerCase() === senhaLimpa.toLowerCase() ||
-          String(t.codigo || "").trim().toLowerCase() === senhaLimpa.toLowerCase()
-      );
-
-      if (tecnico) {
-        const statusAtual = String(tecnico.status || "Ativo").trim().toLowerCase();
-        if (statusAtual === "inativo" || statusAtual === "bloqueado") {
-          setErro("Acesso bloqueado. Contacte a administração.");
-          return;
-        }
-
-        localStorage.setItem("usuario_logado", JSON.stringify({ 
-          tipo: "tecnico", 
-          id: tecnico.id, 
-          nome: tecnico.nome 
-        }));
-
-        router.push("/app-tecnico");
-        return;
-      }
-
-      const totalNuvem = tecnicosNuvem ? tecnicosNuvem.length : 0;
-      if (totalNuvem === 0) {
-        setErro("Código inválido (0 técnicos encontrados na tabela do Supabase).");
-      } else {
-        setErro(`Código de acesso inválido (${totalNuvem} técnico(s) registado(s) na nuvem).`);
-      }
-    } catch (err) {
-      console.error(err);
-      setErro("Falha na autenticação.");
+      // LOGIN TÉCNICO BEM SUCEDIDO
+      const usuarioLogado = { 
+        id: tecEncontrado.id, 
+        nome: tecEncontrado.nome, 
+        tipo: "tecnico" 
+      };
+      localStorage.setItem("usuario_logado", JSON.stringify(usuarioLogado));
+      
+      setMensagem(`Bem-vindo, ${tecEncontrado.nome}!`);
+      setTimeout(() => router.push("/app-tecnico"), 800);
+    } else {
+      setErro("Nome ou PIN incorretos.");
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-[#0b0f19] px-4">
-      <div className="w-full max-w-md bg-[#111827] border border-slate-800 rounded-2xl shadow-2xl p-8">
+    <div className="min-h-screen w-full flex items-center justify-center bg-[#0b0f19] p-4">
+      
+      <div className="w-full max-w-md bg-[#111827] border border-slate-800 rounded-xl shadow-2xl overflow-hidden flex flex-col">
         
-        <div className="flex flex-col items-center mb-8">
-          {logoUrl ? (
-            <img src={logoUrl} alt="Logo" className="h-24 w-auto object-contain mb-4 rounded-xl shadow-lg" />
-          ) : (
-            <div className="h-24 w-24 bg-blue-600 rounded-full flex items-center justify-center mb-4 shadow-lg shadow-blue-900/50">
-              <span className="text-3xl">🔐</span>
-            </div>
-          )}
-          <h1 className="text-xl font-bold text-slate-100 uppercase tracking-widest text-center">SOS Casa de Praia</h1>
-          <p className="text-xs text-slate-500 mt-1">Acesso Restrito na Nuvem</p>
+        {/* CABEÇALHO DO LOGIN */}
+        <div className="p-8 pb-6 text-center border-b border-slate-800">
+          <h1 className="text-2xl font-black text-white tracking-widest uppercase mb-1">
+            <span className="text-blue-500">SOS</span> Casa de Praia
+          </h1>
+          <p className="text-sm text-slate-400 font-medium">Sistema Integrado de Gestão & OS</p>
         </div>
 
-        <form onSubmit={handleLogin} className="flex flex-col gap-5">
-          <div>
-            <label className="block text-xs font-bold text-slate-400 mb-2 uppercase tracking-wider text-center">
-              Código de Acesso
-            </label>
-            <input 
-              type="password" 
-              value={codigo} 
-              onChange={(e) => setCodigo(e.target.value)} 
-              placeholder="Insira a sua senha..." 
-              className="bg-[#0b0f19] border border-slate-700 rounded-xl py-3 px-4 text-center text-lg font-mono text-slate-200 w-full outline-none focus:border-blue-500 transition-colors shadow-inner" 
-            />
-          </div>
+        {/* ABAS DE NAVEGAÇÃO */}
+        <div className="flex w-full bg-slate-900/50">
+          <button 
+            onClick={() => { setTipoLogin("admin"); setErro(""); setMensagem(""); }} 
+            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${tipoLogin === "admin" ? "bg-blue-600/10 text-blue-400 border-b-2 border-blue-500" : "text-slate-500 hover:text-slate-300"}`}
+          >
+            Acesso Master
+          </button>
+          <button 
+            onClick={() => { setTipoLogin("tecnico"); setErro(""); setMensagem(""); }} 
+            className={`flex-1 py-3 text-xs font-bold uppercase tracking-wider transition-colors ${tipoLogin === "tecnico" ? "bg-amber-600/10 text-amber-400 border-b-2 border-amber-500" : "text-slate-500 hover:text-slate-300"}`}
+          >
+            Acesso Técnico
+          </button>
+        </div>
 
-          {erro && (
-            <div className="bg-red-950/40 border border-red-900/50 text-red-400 text-xs text-center py-2.5 rounded-lg font-bold animate-pulse">
-              {erro}
-            </div>
+        {/* FORMULÁRIO DE LOGIN */}
+        <div className="p-8 pt-6">
+          
+          {/* MENSAGENS DE ERRO OU SUCESSO */}
+          {erro && <div className="mb-4 p-3 bg-red-950/50 border border-red-900/50 text-red-400 text-xs font-bold rounded-md text-center">{erro}</div>}
+          {mensagem && <div className="mb-4 p-3 bg-green-950/50 border border-green-900/50 text-green-400 text-xs font-bold rounded-md text-center">{mensagem}</div>}
+
+          {/* FORMULÁRIO MASTER */}
+          {tipoLogin === "admin" && (
+            <form onSubmit={handleLoginAdmin} className="flex flex-col gap-4">
+              <div className="bg-blue-950/20 border border-blue-900/30 p-3 rounded-md mb-2">
+                <p className="text-xs text-blue-500/80 leading-relaxed text-center">
+                  Acesso exclusivo à administração.
+                </p>
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider text-center">PIN MASTER</label>
+                <input 
+                  type="password" 
+                  value={pinMaster} 
+                  onChange={(e) => setPinMaster(e.target.value)} 
+                  placeholder="••••••" 
+                  className="w-full bg-[#0b0f19] border border-slate-700 rounded-md py-3 px-3 text-lg font-bold tracking-[0.5em] text-center text-blue-400 outline-none focus:border-blue-500 transition-colors"
+                />
+              </div>
+              <button type="submit" className="mt-2 w-full bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold py-3 rounded-md transition-colors shadow-lg">
+                Entrar no Painel Master
+              </button>
+            </form>
           )}
 
-          <button 
-            type="submit" 
-            className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-lg hover:shadow-blue-900/50 uppercase tracking-wider text-sm mt-2"
-          >
-            Entrar no Sistema
-          </button>
-        </form>
+          {/* FORMULÁRIO TÉCNICO */}
+          {tipoLogin === "tecnico" && (
+            <form onSubmit={handleLoginTecnico} className="flex flex-col gap-4">
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">O seu Nome (Primeiro Nome)</label>
+                <input 
+                  type="text" 
+                  value={nomeTecnico} 
+                  onChange={(e) => setNomeTecnico(e.target.value)} 
+                  placeholder="Ex: Carlos" 
+                  className="w-full bg-[#0b0f19] border border-slate-700 rounded-md py-2.5 px-3 text-sm text-slate-200 outline-none focus:border-amber-500 transition-colors"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1.5 uppercase tracking-wider">PIN de Acesso</label>
+                <input 
+                  type="password" 
+                  value={pinTecnico} 
+                  onChange={(e) => setPinTecnico(e.target.value)} 
+                  placeholder="Ex: 2026" 
+                  className="w-full bg-[#0b0f19] border border-slate-700 rounded-md py-2.5 px-3 text-sm font-bold tracking-widest text-amber-400 outline-none focus:border-amber-500 transition-colors"
+                />
+              </div>
+              <button type="submit" className="mt-2 w-full bg-amber-600 hover:bg-amber-700 text-white text-sm font-bold py-3 rounded-md transition-colors shadow-lg">
+                Aceder às minhas OS
+              </button>
+            </form>
+          )}
 
+        </div>
       </div>
+      
     </div>
   );
 }
