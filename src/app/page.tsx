@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "./lib/supabase"; 
 
@@ -19,6 +19,7 @@ interface Cliente {
 export default function ClientesPage() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Estados do formulário de clientes
   const [nome, setNome] = useState("");
@@ -41,6 +42,9 @@ export default function ClientesPage() {
   const [pinAtual, setPinAtual] = useState("");
   const [novoPin, setNovoPin] = useState("");
   const [mensagemPin, setMensagemPin] = useState("");
+
+  // ESTADOS DE BACKUP
+  const [mensagemBackup, setMensagemBackup] = useState("");
 
   useEffect(() => {
     setMontado(true);
@@ -122,7 +126,7 @@ export default function ClientesPage() {
 
   const handleTrocarPin = (e: React.FormEvent) => {
     e.preventDefault();
-    const pinSalvo = localStorage.getItem("pin_master") || "123456"; // 123456 é o padrão se nunca foi trocado
+    const pinSalvo = localStorage.getItem("pin_master") || "123456"; 
     
     if (pinAtual !== pinSalvo) {
       setMensagemPin("❌ Erro: O PIN atual está incorreto.");
@@ -137,11 +141,88 @@ export default function ClientesPage() {
     setMensagemPin("✅ Sucesso: PIN Master alterado! Use-o no próximo login.");
     
     setTimeout(() => {
-      setModalPinAberto(false);
-      setPinAtual("");
-      setNovoPin("");
-      setMensagemPin("");
+      setModalPinAberto(false); setPinAtual(""); setNovoPin(""); setMensagemPin("");
     }, 2500);
+  };
+
+  // =========================================================================
+  // SISTEMA DE BACKUP E RESTAURO GERAL (EXPORTAR / IMPORTAR)
+  // =========================================================================
+
+  const exportarBackup = () => {
+    try {
+      const backupData = {
+        clientes: JSON.parse(localStorage.getItem("clientes_cadastrados") || "[]"),
+        estoque: JSON.parse(localStorage.getItem("estoque_cadastrado") || "[]"),
+        orcamentos: JSON.parse(localStorage.getItem("orcamentos_cadastrados") || "[]"),
+        ordens_servico: JSON.parse(localStorage.getItem("ordens_servico") || "[]"),
+        financeiro: JSON.parse(localStorage.getItem("financeiro_cadastrado") || "[]"),
+        tecnicos: JSON.parse(localStorage.getItem("tecnicos_cadastrados") || "[]"),
+        dataBackup: new Date().toISOString()
+      };
+
+      const json = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([json], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `SOS_Praia_Backup_${new Date().toLocaleDateString("pt-BR").replace(/\//g, "-")}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      setMensagemBackup("✅ Backup exportado com sucesso! Guarde o ficheiro num local seguro.");
+      setTimeout(() => setMensagemBackup(""), 4000);
+    } catch (error) {
+      console.error("Erro ao exportar backup:", error);
+      setMensagemBackup("❌ Erro ao exportar o backup.");
+      setTimeout(() => setMensagemBackup(""), 4000);
+    }
+  };
+
+  const handleImportarBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (window.confirm("⚠️ ATENÇÃO: Restaurar um backup irá SUBSTITUIR todos os dados locais atuais do Estoque, Financeiro, Orçamentos e Técnicos. Os clientes são geridos na nuvem.\n\nTem a certeza que deseja continuar?")) {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const content = event.target?.result as string;
+          const backupData = JSON.parse(content);
+
+          if (!backupData.dataBackup) {
+             throw new Error("Ficheiro inválido.");
+          }
+
+          // Restaura apenas os dados locais
+          if (backupData.estoque) localStorage.setItem("estoque_cadastrado", JSON.stringify(backupData.estoque));
+          if (backupData.orcamentos) localStorage.setItem("orcamentos_cadastrados", JSON.stringify(backupData.orcamentos));
+          if (backupData.ordens_servico) localStorage.setItem("ordens_servico", JSON.stringify(backupData.ordens_servico));
+          if (backupData.financeiro) localStorage.setItem("financeiro_cadastrado", JSON.stringify(backupData.financeiro));
+          if (backupData.tecnicos) localStorage.setItem("tecnicos_cadastrados", JSON.stringify(backupData.tecnicos));
+
+          setMensagemBackup("✅ Backup restaurado com sucesso! A recarregar o sistema...");
+          
+          setTimeout(() => {
+            window.location.reload();
+          }, 1500);
+
+        } catch (error) {
+          console.error("Erro ao processar ficheiro de backup:", error);
+          setMensagemBackup("❌ Erro: O ficheiro de backup é inválido ou está corrompido.");
+          setTimeout(() => setMensagemBackup(""), 4000);
+        }
+      };
+      reader.readAsText(file);
+    }
+    
+    // Reset do input de ficheiro
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   };
 
   const clientesFiltrados = clientes.filter(c => 
@@ -162,7 +243,7 @@ export default function ClientesPage() {
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-[#111827] border border-slate-800 rounded-lg p-4 shadow-sm gap-4">
         <div>
           <h1 className="text-xl font-bold text-slate-100 uppercase tracking-wide">Painel Master</h1>
-          <p className="text-xs text-slate-400 mt-0.5">Gestão central de clientes na nuvem</p>
+          <p className="text-xs text-slate-400 mt-0.5">Gestão central de clientes e sistema</p>
         </div>
         <button onClick={() => setModalPinAberto(true)} className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-2 px-4 rounded-md transition-colors border border-slate-700 flex items-center gap-2 shadow-sm">
           ⚙️ Alterar Senha (PIN Master)
@@ -317,6 +398,42 @@ export default function ClientesPage() {
           </div>
         )}
       </div>
+
+      {/* ÁREA DE BACKUP DO SISTEMA */}
+      <div className="bg-[#0b0f19] border border-indigo-900/40 rounded-lg p-5 mt-2">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h3 className="text-indigo-400 text-sm font-bold uppercase tracking-wider mb-1 flex items-center gap-2">
+              💾 Backup de Segurança (Local)
+            </h3>
+            <p className="text-[11px] text-slate-500">Exporte ou restaure todo o seu sistema (Estoque, OS, Orçamentos, Financeiro) de uma só vez.</p>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+            <button onClick={exportarBackup} className="bg-indigo-900/50 hover:bg-indigo-800 text-indigo-300 border border-indigo-700 text-xs font-bold py-2.5 px-6 rounded-md transition-colors whitespace-nowrap">
+              ⬇️ Exportar Backup
+            </button>
+            
+            <label className="bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-600 text-xs font-bold py-2.5 px-6 rounded-md transition-colors cursor-pointer text-center whitespace-nowrap">
+              ⬆️ Importar Restauro
+              <input 
+                type="file" 
+                accept=".json" 
+                className="hidden" 
+                ref={fileInputRef}
+                onChange={handleImportarBackup}
+              />
+            </label>
+          </div>
+        </div>
+        
+        {mensagemBackup && (
+          <div className={`mt-4 p-3 rounded-md text-xs font-bold text-center border ${mensagemBackup.includes("Erro") ? "bg-red-950/30 border-red-900/50 text-red-400" : "bg-green-950/30 border-green-900/50 text-green-400"}`}>
+            {mensagemBackup}
+          </div>
+        )}
+      </div>
+
     </div>
   );
 }
