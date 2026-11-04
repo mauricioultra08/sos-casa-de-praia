@@ -25,6 +25,7 @@ export default function OrcamentosPage() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [estoque, setEstoque] = useState<Produto[]>([]);
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
   // Estados do formulário
   const [clienteId, setClienteId] = useState("");
@@ -49,19 +50,26 @@ export default function OrcamentosPage() {
     if (!usuarioStr) { router.push("/login"); return; }
     if (JSON.parse(usuarioStr).tipo === "tecnico") { router.push("/app-tecnico"); return; }
 
+    const logoSalva = localStorage.getItem("app_logo");
+    if (logoSalva) setLogoUrl(logoSalva);
+
     carregarDadosBase();
     carregarOrcamentosNuvem();
   }, [router]);
 
   const carregarDadosBase = async () => {
-    const resClientes = await supabase.from("clientes").select("*");
-    if (resClientes.data) setClientes(resClientes.data);
+    try {
+      const resClientes = await supabase.from("clientes").select("*");
+      if (resClientes.data) setClientes(resClientes.data);
 
-    const resEstoque = await supabase.from("estoque").select("*");
-    if (resEstoque.data) {
-      setEstoque(resEstoque.data.map((p:any) => ({
-        id: p.id, nome: p.nome, quantidade: p.quantidade, precoVenda: p.precoVenda
-      })));
+      const resEstoque = await supabase.from("estoque").select("*");
+      if (resEstoque.data) {
+        setEstoque(resEstoque.data.map((p:any) => ({
+          id: p.id, nome: p.nome, quantidade: p.quantidade, precoVenda: p.preco_venda || p.precoVenda
+        })));
+      }
+    } catch (err) {
+      console.error("Erro ao carregar base:", err);
     }
   };
 
@@ -78,9 +86,10 @@ export default function OrcamentosPage() {
           valorTotal: o.valor_total,
           status: o.status,
           dataCriacao: o.data_criacao,
-          itens: JSON.parse(o.itens || "[]")
+          itens: typeof o.itens === 'string' ? JSON.parse(o.itens || "[]") : o.itens
         }));
         setOrcamentos(orcFormatados);
+        // CRUCIAL: Salvar no localStorage para o seu Financeiro ler corretamente as entradas geradas
         localStorage.setItem("orcamentos_cadastrados", JSON.stringify(orcFormatados));
       }
     } catch (err) {
@@ -164,6 +173,7 @@ export default function OrcamentosPage() {
       await carregarOrcamentosNuvem();
     } catch (err) {
       setMensagem("Erro ao gerar orçamento.");
+      console.error(err);
     }
     setTimeout(() => setMensagem(""), 3000);
   };
@@ -177,22 +187,39 @@ export default function OrcamentosPage() {
 
   const alterarStatus = async (id: number, novoStatus: "Pendente" | "Aprovado" | "Rejeitado") => {
     try {
+      // 1. Atualiza o status do Orçamento
       const { error } = await supabase.from("orcamentos").update({ status: novoStatus }).eq("id", id);
       if (error) throw error;
       
       if (novoStatus === "Aprovado") {
         const orc = orcamentos.find(o => o.id === id);
         if (orc) {
-          const entradaFinanceira = {
-            id: Date.now(),
-            tipo: "Entrada",
-            descricao: `Pagamento Orçamento #${orc.id.toString().slice(-4)} - ${orc.clienteNome}`,
-            valor: orc.valorTotal,
-            data_registro: new Date().toLocaleDateString("pt-BR"),
-            os_id: null
-          };
-          await supabase.from("financeiro").insert([entradaFinanceira]);
+          
+          // 2. GERA A ORDEM DE SERVIÇO NA NUVEM
+          let descFormatada = `[GERADO AUTOMATICAMENTE VIA ORÇAMENTO ORC-${orc.id.toString().slice(-4)}]\n\n`;
+          if (orc.descricao) {
+            descFormatada += `NOTAS DO ORÇAMENTO:\n${orc.descricao}\n\n`;
+          }
+          descFormatada += "ITENS E SERVIÇOS A EXECUTAR:\n";
+          orc.itens.forEach(item => {
+            descFormatada += `- ${item.quantidade}x ${item.nome}\n`;
+          });
 
+          const novaOSNuvem = {
+            id: Date.now(),
+            orcamento_id: orc.id,
+            cliente_id: orc.clienteId,
+            cliente_nome: orc.clienteNome,
+            tecnico_id: 0, // 0 = Sem técnico definido
+            tecnico_nome: "A Definir",
+            descricao: descFormatada,
+            status: "Aprovada",
+            data_criacao: new Date().toLocaleDateString("pt-BR")
+          };
+          
+          await supabase.from("ordens_servico").insert([novaOSNuvem]);
+
+          // 3. Dá baixa no Estoque Nuvem (Apenas produtos)
           for (const item of orc.itens) {
             if (item.tipo === "produto") {
               const prod = estoque.find(p => p.id === item.produtoId);
@@ -205,9 +232,15 @@ export default function OrcamentosPage() {
           await carregarDadosBase(); 
         }
       }
+      
+      // 4. Recarrega orçamentos e atualiza o localStorage para o Financeiro
       await carregarOrcamentosNuvem();
+      setMensagem(`Orçamento marcado como ${novoStatus}! OS gerada com sucesso.`);
+      setTimeout(() => setMensagem(""), 4000);
+      
     } catch (err) {
       alert("Erro ao processar aprovação.");
+      console.error(err);
     }
   };
 
@@ -235,6 +268,13 @@ export default function OrcamentosPage() {
       `}</style>
 
       <div className="w-full flex flex-col gap-6 print:hidden">
+        {mensagem && (
+          <div className="w-full bg-emerald-950/40 border border-emerald-900/50 text-emerald-400 text-sm font-bold text-center py-3 rounded-lg shadow-sm">
+            ✅ {mensagem}
+          </div>
+        )}
+        
+        {/* FORMULÁRIO DE ORÇAMENTO */}
         <div className="bg-[#111827] border border-slate-800 rounded-lg p-4 shadow-sm">
           <h2 className="text-blue-500 text-sm font-bold mb-3 uppercase tracking-wider flex items-center gap-2">
             📝 Novo Orçamento (Nuvem)
@@ -254,9 +294,11 @@ export default function OrcamentosPage() {
               <textarea value={descricaoGeral} onChange={(e) => setDescricaoGeral(e.target.value)} rows={2} placeholder="Ex: Referente à instalação de 4 câmaras de segurança..." className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-xs text-slate-200 resize-none outline-none focus:border-blue-500"></textarea>
             </div>
 
+            {/* ADICIONAR PRODUTOS E SERVIÇOS */}
             <div className="bg-[#0b0f19] border border-slate-800 p-3 rounded-md flex flex-col gap-3">
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 border-b border-slate-800 pb-3">
                 
+                {/* MATERIAIS */}
                 <div className="flex flex-col gap-2">
                   <p className="text-[10px] text-blue-400 font-bold uppercase tracking-wider">📦 Adicionar Material</p>
                   <div className="flex gap-2">
@@ -269,6 +311,7 @@ export default function OrcamentosPage() {
                   </div>
                 </div>
 
+                {/* SERVIÇOS */}
                 <div className="flex flex-col gap-2">
                   <p className="text-[10px] text-amber-400 font-bold uppercase tracking-wider">🔧 Adicionar Serviço</p>
                   <div className="flex gap-2">
@@ -279,6 +322,7 @@ export default function OrcamentosPage() {
                 </div>
               </div>
 
+              {/* LISTA DE ITENS */}
               <div className="flex flex-col gap-1">
                 {itensSelecionados.length === 0 ? (
                   <p className="text-xs text-slate-500 text-center py-2">Nenhum item adicionado ao orçamento.</p>
@@ -305,10 +349,10 @@ export default function OrcamentosPage() {
             </div>
 
             <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-3 rounded-md transition-colors uppercase">Guardar Orçamento na Nuvem</button>
-            {mensagem && <div className={`text-xs text-center ${mensagem.includes("Erro") || mensagem.includes("Selecione") ? "text-red-400" : "text-green-400"}`}>{mensagem}</div>}
           </form>
         </div>
 
+        {/* LISTA DE ORÇAMENTOS */}
         <div className="bg-[#111827] border border-slate-800 rounded-lg p-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider">Histórico de Orçamentos ({orcamentosFiltrados.length})</h3>
@@ -327,31 +371,41 @@ export default function OrcamentosPage() {
                   <div className="flex justify-between items-start border-b border-slate-800 pb-2">
                     <div>
                       <div className="flex items-center gap-2 mb-1">
-                        <span className="text-[10px] font-mono text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded">ORC-{orc.id.toString().slice(-4)}</span>
-                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${orc.status === 'Aprovado' ? 'bg-emerald-900/40 text-emerald-400' : orc.status === 'Rejeitado' ? 'bg-red-900/40 text-red-400' : 'bg-amber-900/40 text-amber-400'}`}>
+                        <span className="text-[10px] font-mono text-purple-400 bg-purple-950/60 px-2 py-0.5 rounded border border-purple-900/50">ORC-{orc.id.toString().slice(-4)}</span>
+                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${orc.status === 'Aprovado' ? 'bg-emerald-900/40 text-emerald-400 border-emerald-800/50' : orc.status === 'Rejeitado' ? 'bg-red-900/40 text-red-400 border-red-800/50' : 'bg-amber-900/40 text-amber-400 border-amber-800/50'}`}>
                           {orc.status.toUpperCase()}
                         </span>
                       </div>
                       <p className="font-bold text-slate-200 text-sm">{orc.clienteNome}</p>
-                      <p className="text-[10px] text-slate-400">📅 {orc.dataCriacao}</p>
+                      <p className="text-[10px] text-slate-400 mt-0.5">📅 {orc.dataCriacao}</p>
                     </div>
                     <div className="text-right">
-                      <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5">Valor Total</p>
+                      <p className="text-[10px] text-slate-400 uppercase tracking-wider mb-0.5 font-bold">Valor Total</p>
                       <p className="font-black text-green-400 text-base">R$ {Number(orc.valorTotal).toFixed(2).replace('.', ',')}</p>
                     </div>
                   </div>
                   
                   <div className="flex flex-col sm:flex-row justify-between items-center gap-2">
-                    <p className="text-xs text-slate-500 line-clamp-1 flex-1">{orc.descricao || `${orc.itens.length} itens inclusos`}</p>
+                    <p className="text-xs text-slate-500 line-clamp-1 flex-1 bg-slate-900/50 px-2 py-1 rounded">
+                      {orc.descricao || `${orc.itens.length} itens inclusos na proposta`}
+                    </p>
                     <div className="flex gap-2 w-full sm:w-auto">
                       {orc.status === "Pendente" && (
                         <>
-                          <button onClick={() => alterarStatus(orc.id, "Aprovado")} className="flex-1 sm:flex-none text-emerald-400 bg-emerald-950/30 px-3 py-1.5 rounded border border-emerald-900/50 hover:bg-emerald-900/40 transition-colors text-xs font-bold">👍 Aprovar</button>
-                          <button onClick={() => alterarStatus(orc.id, "Rejeitado")} className="flex-1 sm:flex-none text-red-400 bg-red-950/30 px-3 py-1.5 rounded border border-red-900/50 hover:bg-red-900/40 transition-colors text-xs font-bold">👎 Rejeitar</button>
+                          <button onClick={() => alterarStatus(orc.id, "Aprovado")} className="flex-1 sm:flex-none text-emerald-400 bg-emerald-950/30 px-3 py-1.5 rounded border border-emerald-900/50 hover:bg-emerald-900/40 transition-colors text-xs font-bold whitespace-nowrap">
+                            ✅ Aprovar & Gerar OS
+                          </button>
+                          <button onClick={() => alterarStatus(orc.id, "Rejeitado")} className="flex-1 sm:flex-none text-red-400 bg-red-950/30 px-3 py-1.5 rounded border border-red-900/50 hover:bg-red-900/40 transition-colors text-xs font-bold whitespace-nowrap">
+                            ❌ Rejeitar
+                          </button>
                         </>
                       )}
-                      <button onClick={() => imprimirOrcamento(orc)} className="flex-1 sm:flex-none text-blue-400 bg-blue-950/30 px-3 py-1.5 rounded border border-blue-900/50 hover:bg-blue-900/40 transition-colors text-xs font-bold flex items-center justify-center">🖨️ Imprimir</button>
-                      <button onClick={() => apagarOrcamento(orc.id)} className="flex-1 sm:flex-none text-red-500 hover:text-red-400 text-xs font-medium px-2 py-1.5">Apagar</button>
+                      <button onClick={() => imprimirOrcamento(orc)} className="flex-1 sm:flex-none text-blue-400 bg-blue-950/30 px-3 py-1.5 rounded border border-blue-900/50 hover:bg-blue-900/40 transition-colors text-xs font-bold flex items-center justify-center gap-1.5">
+                        🖨️ Imprimir
+                      </button>
+                      <button onClick={() => apagarOrcamento(orc.id)} className="flex-1 sm:flex-none text-red-500 hover:text-red-400 text-xs font-medium bg-red-950/20 px-3 py-1.5 rounded border border-red-900/30 transition-colors">
+                        Apagar
+                      </button>
                     </div>
                   </div>
                 </div>
@@ -365,7 +419,6 @@ export default function OrcamentosPage() {
         <div className="hidden print:block print:bg-white print:text-black w-full font-sans">
           <div className="border-2 border-black p-8 rounded-lg max-w-4xl mx-auto mt-4">
             <div className="flex flex-col items-center border-b-2 border-black pb-4 mb-6 text-center">
-              {/* IMAGEM FIXA DA LOGO NA IMPRESSÃO DO ORÇAMENTO */}
               <img src="/logo.jpg" alt="Logo SOS Casa de Praia" className="h-24 object-contain mb-2" />
               <div className="text-[11px] font-bold text-gray-700 mb-3 bg-gray-100 px-4 py-1 rounded-full border border-black">
                 CNPJ: 38.250.620.0001-07 | WhatsApp: (13) 98131-1644
