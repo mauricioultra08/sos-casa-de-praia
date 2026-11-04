@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "../lib/supabase";
 
 interface OrdemServico {
   id: number;
@@ -21,54 +22,64 @@ export default function AppTecnicoPage() {
   const [montado, setMontado] = useState(false);
   const [tecnicoLogado, setTecnicoLogado] = useState<any>(null);
   const [minhasOrdens, setMinhasOrdens] = useState<OrdemServico[]>([]);
+  const [carregando, setCarregando] = useState(false);
 
   useEffect(() => {
     setMontado(true);
     const usuarioStr = localStorage.getItem("usuario_logado");
     
-    if (!usuarioStr) { 
-      router.push("/login"); 
-      return; 
-    }
+    if (!usuarioStr) { router.push("/login"); return; }
     
     const usuario = JSON.parse(usuarioStr);
-    
-    // Se for admin, manda de volta para o painel principal
-    if (usuario.tipo !== "tecnico") { 
-      router.push("/"); 
-      return; 
-    }
+    if (usuario.tipo !== "tecnico") { router.push("/"); return; }
 
     setTecnicoLogado(usuario);
-    carregarMinhasOS(usuario.id); // Busca apenas as OSs deste técnico
+    carregarMinhasOSNuvem(usuario.id);
   }, [router]);
 
-  const carregarMinhasOS = (idTecnico: number) => {
-    // Por enquanto, lê do localStorage para não quebrar o sistema atual
-    const ordensSalvas = localStorage.getItem("ordens_servico");
-    if (ordensSalvas) {
-      const todasOS = JSON.parse(ordensSalvas) as OrdemServico[];
+  const carregarMinhasOSNuvem = async (idTecnico: number) => {
+    setCarregando(true);
+    try {
+      const { data, error } = await supabase
+        .from("ordens_servico")
+        .select("*")
+        .eq("tecnico_id", idTecnico)
+        .order("id", { ascending: false });
+
+      if (error) throw error;
       
-      // Filtra apenas as que pertencem ao técnico e que não estão finalizadas há muito tempo
-      const osDoTecnico = todasOS.filter(os => os.tecnicoId === idTecnico);
-      setMinhasOrdens(osDoTecnico);
+      if (data) {
+        const ordensFormatadas: OrdemServico[] = data.map((os: any) => ({
+          id: os.id,
+          clienteId: os.cliente_id,
+          clienteNome: os.cliente_nome,
+          tecnicoId: os.tecnico_id,
+          tecnicoNome: os.tecnico_nome,
+          descricao: os.descricao,
+          status: os.status,
+          dataCriacao: os.data_criacao,
+          dataAgendamento: os.data_agendamento,
+          horaAgendamento: os.hora_agendamento
+        }));
+        setMinhasOrdens(ordensFormatadas);
+      }
+    } catch (err) {
+      console.error("Erro ao carregar OS do técnico:", err);
+    } finally {
+      setCarregando(false);
     }
   };
 
-  const alterarStatusOS = (id: number, novoStatus: "Aprovada" | "Em Andamento" | "Finalizado") => {
-    const ordensSalvas = localStorage.getItem("ordens_servico");
-    if (!ordensSalvas) return;
-    
-    const todasOS = JSON.parse(ordensSalvas) as OrdemServico[];
-    const novasOrdensGerais = todasOS.map(os => 
-      os.id === id ? { ...os, status: novoStatus } : os
-    );
-    
-    // Atualiza a base de dados central
-    localStorage.setItem("ordens_servico", JSON.stringify(novasOrdensGerais));
-    
-    // Atualiza a tela do técnico instantaneamente
-    setMinhasOrdens(novasOrdensGerais.filter(os => os.tecnicoId === tecnicoLogado.id));
+  const alterarStatusOS = async (id: number, novoStatus: "Aprovada" | "Em Andamento" | "Finalizado") => {
+    try {
+      const { error } = await supabase.from("ordens_servico").update({ status: novoStatus }).eq("id", id);
+      if (error) throw error;
+      
+      // Atualiza a tela imediatamente sem precisar recarregar tudo
+      setMinhasOrdens(minhasOrdens.map(os => os.id === id ? { ...os, status: novoStatus } : os));
+    } catch (err) {
+      alert("Erro de conexão. Tente novamente.");
+    }
   };
 
   const handleSair = () => {
@@ -80,7 +91,6 @@ export default function AppTecnicoPage() {
     return <div className="w-full text-center py-12 text-slate-500 text-sm">A carregar painel do técnico...</div>;
   }
 
-  // Separa as OSs para facilitar a visualização
   const osAprovadas = minhasOrdens.filter(os => os.status === "Aprovada");
   const osEmAndamento = minhasOrdens.filter(os => os.status === "Em Andamento");
   const osFinalizadas = minhasOrdens.filter(os => os.status === "Finalizado");
@@ -94,9 +104,14 @@ export default function AppTecnicoPage() {
           <h1 className="text-blue-400 font-black text-lg tracking-wide">TÉCNICO APP</h1>
           <p className="text-slate-300 text-sm font-medium mt-1">Olá, <span className="text-white font-bold">{tecnicoLogado.nome}</span></p>
         </div>
-        <button onClick={handleSair} className="bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 px-4 py-2 rounded-md text-xs font-bold transition-colors">
-          Sair 👋
-        </button>
+        <div className="flex flex-col gap-2 items-end">
+          <button onClick={() => carregarMinhasOSNuvem(tecnicoLogado.id)} className="text-slate-400 hover:text-white text-xs bg-slate-800 px-3 py-1 rounded">
+            {carregando ? "⌛" : "🔄 Atualizar"}
+          </button>
+          <button onClick={handleSair} className="bg-red-950/40 hover:bg-red-900/60 text-red-400 border border-red-900/50 px-4 py-1.5 rounded-md text-xs font-bold transition-colors">
+            Sair 👋
+          </button>
+        </div>
       </div>
 
       {/* OS EM ANDAMENTO (DESTAQUE) */}
@@ -131,7 +146,7 @@ export default function AppTecnicoPage() {
         
         {osAprovadas.length === 0 ? (
           <div className="text-center py-8 text-slate-500 text-sm border border-dashed border-slate-800 rounded-lg bg-[#111827]">
-            Nenhuma OS pendente no momento.
+            Nenhuma OS pendente na nuvem.
           </div>
         ) : (
           osAprovadas.map(os => (
@@ -164,7 +179,7 @@ export default function AppTecnicoPage() {
           <h2 className="text-slate-500 text-[10px] font-bold uppercase tracking-wider flex items-center gap-2">
             ✅ Finalizadas Recentemente
           </h2>
-          {osFinalizadas.slice(0, 5).map(os => ( // Mostra apenas as últimas 5 para não pesar o telemóvel
+          {osFinalizadas.slice(0, 5).map(os => (
             <div key={os.id} className="bg-[#111827] border border-slate-800 p-3 rounded-md flex justify-between items-center">
               <div>
                 <span className="text-[10px] font-mono text-emerald-500 mr-2">OS-{os.id.toString().slice(-4)}</span>
@@ -174,7 +189,6 @@ export default function AppTecnicoPage() {
           ))}
         </div>
       )}
-
     </div>
   );
 }

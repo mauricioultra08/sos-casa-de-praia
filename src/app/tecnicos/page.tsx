@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "../lib/supabase";
 
 interface Tecnico {
   id: number;
   nome: string;
   telefone: string;
-  senhaAcesso: string; // NOVO CAMPO: Senha simples para o técnico
+  senhaAcesso: string;
   status: "Ativo" | "Inativo";
 }
 
@@ -15,13 +16,11 @@ export default function TecnicosPage() {
   const router = useRouter();
   const [montado, setMontado] = useState(false);
 
-  // Estados do formulário
   const [nome, setNome] = useState("");
   const [telefone, setTelefone] = useState("");
   const [senhaAcesso, setSenhaAcesso] = useState("");
   const [statusTecnico, setStatusTecnico] = useState<"Ativo" | "Inativo">("Ativo");
   
-  // Estados de controlo
   const [tecnicos, setTecnicos] = useState<Tecnico[]>([]);
   const [tecnicoEditandoId, setTecnicoEditandoId] = useState<number | null>(null);
   const [mensagem, setMensagem] = useState("");
@@ -33,42 +32,60 @@ export default function TecnicosPage() {
     if (!usuarioStr) { router.push("/login"); return; }
     if (JSON.parse(usuarioStr).tipo === "tecnico") { router.push("/app-tecnico"); return; }
 
-    const tecs = localStorage.getItem("tecnicos_cadastrados");
-    if (tecs) setTecnicos(JSON.parse(tecs));
+    carregarTecnicosNuvem();
   }, [router]);
 
-  const handleSalvar = (e: React.FormEvent) => {
+  const carregarTecnicosNuvem = async () => {
+    try {
+      const { data, error } = await supabase.from("tecnicos").select("*").order("id", { ascending: false });
+      if (error) throw error;
+      if (data) {
+        const tecnicosFormatados: Tecnico[] = data.map((t: any) => ({
+          id: t.id,
+          nome: t.nome,
+          telefone: t.telefone || "",
+          senhaAcesso: t.senha_acesso,
+          status: t.status
+        }));
+        setTecnicos(tecnicosFormatados);
+        localStorage.setItem("tecnicos_cadastrados", JSON.stringify(tecnicosFormatados)); // Backup local
+      }
+    } catch (err) {
+      console.error("Erro ao carregar técnicos da nuvem:", err);
+    }
+  };
+
+  const handleSalvar = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!nome.trim() || !senhaAcesso.trim()) {
       setMensagem("Preencha pelo menos o nome e a senha de acesso."); return;
     }
 
-    let novaLista = [...tecnicos];
+    const dadosDb = {
+      nome: nome.trim(),
+      telefone: telefone.trim(),
+      senha_acesso: senhaAcesso.trim(),
+      status: statusTecnico
+    };
 
-    if (tecnicoEditandoId !== null) {
-      novaLista = novaLista.map(t => 
-        t.id === tecnicoEditandoId 
-          ? { ...t, nome, telefone, senhaAcesso, status: statusTecnico } 
-          : t
-      );
-      setMensagem("Técnico atualizado!");
-      setTecnicoEditandoId(null);
-    } else {
-      const novoTecnico: Tecnico = {
-        id: Date.now(),
-        nome,
-        telefone,
-        senhaAcesso,
-        status: statusTecnico
-      };
-      novaLista = [novoTecnico, ...novaLista];
-      setMensagem("Novo técnico cadastrado!");
+    try {
+      if (tecnicoEditandoId !== null) {
+        const { error } = await supabase.from("tecnicos").update(dadosDb).eq("id", tecnicoEditandoId);
+        if (error) throw error;
+        setMensagem("Técnico atualizado na nuvem!");
+        setTecnicoEditandoId(null);
+      } else {
+        const novoId = Date.now();
+        const { error } = await supabase.from("tecnicos").insert([{ id: novoId, ...dadosDb }]);
+        if (error) throw error;
+        setMensagem("Novo técnico cadastrado na nuvem!");
+      }
+
+      setNome(""); setTelefone(""); setSenhaAcesso(""); setStatusTecnico("Ativo");
+      await carregarTecnicosNuvem();
+    } catch (err: any) {
+      setMensagem("Erro ao salvar: " + (err.message || "Tente novamente."));
     }
-
-    setTecnicos(novaLista);
-    localStorage.setItem("tecnicos_cadastrados", JSON.stringify(novaLista));
-    
-    setNome(""); setTelefone(""); setSenhaAcesso(""); setStatusTecnico("Ativo");
     setTimeout(() => setMensagem(""), 3000);
   };
 
@@ -81,13 +98,17 @@ export default function TecnicosPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  const apagarTecnico = (id: number) => {
-    if (window.confirm("Deseja apagar este técnico permanentemente?")) {
-      const novaLista = tecnicos.filter(t => t.id !== id);
-      setTecnicos(novaLista);
-      localStorage.setItem("tecnicos_cadastrados", JSON.stringify(novaLista));
-      if (tecnicoEditandoId === id) {
-        setNome(""); setTelefone(""); setSenhaAcesso(""); setTecnicoEditandoId(null);
+  const apagarTecnico = async (id: number) => {
+    if (window.confirm("Deseja apagar este técnico permanentemente da nuvem?")) {
+      try {
+        const { error } = await supabase.from("tecnicos").delete().eq("id", id);
+        if (error) throw error;
+        await carregarTecnicosNuvem();
+        if (tecnicoEditandoId === id) {
+          setNome(""); setTelefone(""); setSenhaAcesso(""); setTecnicoEditandoId(null);
+        }
+      } catch (err) {
+        alert("Erro ao apagar técnico da nuvem.");
       }
     }
   };
@@ -105,7 +126,7 @@ export default function TecnicosPage() {
       {/* FORMULÁRIO DE CADASTRO */}
       <div className="bg-[#111827] border border-slate-800 rounded-lg p-4 shadow-sm">
         <h2 className="text-blue-500 text-sm font-bold mb-3 uppercase tracking-wider flex items-center gap-2">
-          {tecnicoEditandoId ? "✏️ Editar Técnico" : "+ Cadastrar Técnico"}
+          {tecnicoEditandoId ? "✏️ Editar Técnico (Nuvem)" : "+ Cadastrar Técnico (Nuvem Ativa)"}
         </h2>
 
         <form onSubmit={handleSalvar} className="flex flex-col gap-2.5">
@@ -131,7 +152,7 @@ export default function TecnicosPage() {
             </div>
           </div>
           
-          {mensagem && <div className={`text-xs mt-1 ${mensagem.includes("Preencha") ? "text-red-400" : "text-green-400"}`}>{mensagem}</div>}
+          {mensagem && <div className={`text-xs mt-1 ${mensagem.includes("Erro") || mensagem.includes("Preencha") ? "text-red-400" : "text-green-400"}`}>{mensagem}</div>}
 
           <div className="flex gap-2 mt-1">
             <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 rounded-md transition-colors">
@@ -150,7 +171,7 @@ export default function TecnicosPage() {
       <div className="bg-[#111827] border border-slate-800 rounded-lg p-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
           <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider">
-            Técnicos da Equipe ({tecnicosFiltrados.length})
+            Técnicos da Equipe na Nuvem ({tecnicosFiltrados.length})
           </h3>
           <div className="relative w-full sm:max-w-xs">
             <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-500 text-xs">🔍</span>
@@ -159,7 +180,7 @@ export default function TecnicosPage() {
         </div>
         
         {tecnicos.length === 0 ? (
-           <div className="text-center py-6 text-slate-500 text-xs border border-dashed border-slate-800 rounded-md bg-[#0b0f19]">Nenhum técnico cadastrado.</div>
+           <div className="text-center py-6 text-slate-500 text-xs border border-dashed border-slate-800 rounded-md bg-[#0b0f19]">Nenhum técnico cadastrado na nuvem.</div>
         ) : (
           <div className="flex flex-col gap-2">
             {tecnicosFiltrados.map(tec => (
@@ -170,7 +191,7 @@ export default function TecnicosPage() {
                     <p className="font-bold text-slate-200 text-sm">{tec.nome}</p>
                   </div>
                   <p className="text-[11px] text-slate-400">📱 {tec.telefone || "Sem telefone"}</p>
-                  <p className="text-[11px] text-amber-400 mt-1 font-mono">🔑 Senha: {tec.senhaAcesso}</p>
+                  <p className="text-[11px] text-amber-400 mt-1 font-mono">🔑 Senha (PIN): {tec.senhaAcesso}</p>
                 </div>
                 
                 <div className="flex gap-2">

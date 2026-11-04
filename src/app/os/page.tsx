@@ -2,12 +2,13 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { supabase } from "../lib/supabase";
 
-// Interface do Cliente atualizada com Email e CNPJ/CPF
 interface Cliente { id: number; nome: string; telefone?: string; email?: string; cnpjCpf?: string; }
 interface Tecnico { id: number; nome: string; status: string; }
 interface OrdemServico {
   id: number;
+  orcamentoId?: number;
   clienteId: number;
   clienteNome: string;
   tecnicoId: number;
@@ -26,7 +27,6 @@ export default function OSPage() {
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [tecnicos, setTecnicos] = useState<Tecnico[]>([]);
   const [ordens, setOrdens] = useState<OrdemServico[]>([]);
-  const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
   const [clienteId, setClienteId] = useState("");
   const [tecnicoId, setTecnicoId] = useState("");
@@ -35,7 +35,6 @@ export default function OSPage() {
   
   const [mensagem, setMensagem] = useState("");
   const [busca, setBusca] = useState("");
-
   const [osParaImprimir, setOsParaImprimir] = useState<OrdemServico | null>(null);
 
   useEffect(() => {
@@ -44,30 +43,45 @@ export default function OSPage() {
     if (!usuarioStr) { router.push("/login"); return; }
     if (JSON.parse(usuarioStr).tipo === "tecnico") { router.push("/app-tecnico"); return; }
 
-    const logoSalva = localStorage.getItem("app_logo");
-    if (logoSalva) setLogoUrl(logoSalva);
-
     const clientesSalvos = localStorage.getItem("clientes_cadastrados");
     if (clientesSalvos) setClientes(JSON.parse(clientesSalvos));
 
     const tecnicosSalvos = localStorage.getItem("tecnicos_cadastrados");
     if (tecnicosSalvos) setTecnicos(JSON.parse(tecnicosSalvos));
 
-    carregarOrdensLocal();
+    carregarOrdensNuvem();
   }, [router]);
 
-  const carregarOrdensLocal = () => {
-    const ordensSalvas = localStorage.getItem("ordens_servico");
-    if (ordensSalvas) {
-      setOrdens(JSON.parse(ordensSalvas));
+  const carregarOrdensNuvem = async () => {
+    try {
+      const { data, error } = await supabase.from("ordens_servico").select("*").order("id", { ascending: false });
+      if (error) throw error;
+      if (data) {
+        const ordensFormatadas: OrdemServico[] = data.map((os: any) => ({
+          id: os.id,
+          orcamentoId: os.orcamento_id,
+          clienteId: os.cliente_id,
+          clienteNome: os.cliente_nome,
+          tecnicoId: os.tecnico_id,
+          tecnicoNome: os.tecnico_nome,
+          descricao: os.descricao,
+          status: os.status,
+          dataCriacao: os.data_criacao,
+          dataAgendamento: os.data_agendamento,
+          horaAgendamento: os.hora_agendamento
+        }));
+        setOrdens(ordensFormatadas);
+        localStorage.setItem("ordens_servico", JSON.stringify(ordensFormatadas)); 
+      }
+    } catch (err) {
+      console.error("Erro ao carregar OS da nuvem:", err);
     }
   };
 
-  const handleGerarOSManual = (e: React.FormEvent) => {
+  const handleGerarOSManual = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!clienteId || !tecnicoId || !servicoExecutar.trim()) {
-      setMensagem("Selecione o Cliente, Técnico e o Serviço a ser executado.");
-      return;
+      setMensagem("Selecione o Cliente, Técnico e o Serviço a ser executado."); return;
     }
 
     const clienteSelecionado = clientes.find(c => c.id === Number(clienteId));
@@ -79,47 +93,56 @@ export default function OSPage() {
     }
     descFormatada += "SERVIÇO A SER EXECUTADO:\n" + servicoExecutar.trim();
 
-    const novaOS: OrdemServico = {
+    const novaOSNuvem = {
       id: Date.now(),
-      clienteId: Number(clienteId),
-      clienteNome: clienteSelecionado?.nome || "Desconhecido",
-      tecnicoId: Number(tecnicoId),
-      tecnicoNome: tecnicoSelecionado?.nome || "Desconhecido",
+      cliente_id: Number(clienteId),
+      cliente_nome: clienteSelecionado?.nome || "Desconhecido",
+      tecnico_id: Number(tecnicoId),
+      tecnico_nome: tecnicoSelecionado?.nome || "Desconhecido",
       descricao: descFormatada,
       status: "Aprovada",
-      dataCriacao: new Date().toLocaleDateString("pt-BR")
+      data_criacao: new Date().toLocaleDateString("pt-BR")
     };
 
-    const novasOrdens = [novaOS, ...ordens];
-    setOrdens(novasOrdens);
-    localStorage.setItem("ordens_servico", JSON.stringify(novasOrdens));
+    try {
+      const { error } = await supabase.from("ordens_servico").insert([novaOSNuvem]);
+      if (error) throw error;
 
-    setMensagem("Ordem de Serviço manual gerada com sucesso!");
-    setClienteId(""); setTecnicoId(""); setServicoExecutar(""); setMateriaisLevar("");
+      setMensagem("Ordem de Serviço manual gerada na nuvem com sucesso!");
+      setClienteId(""); setTecnicoId(""); setServicoExecutar(""); setMateriaisLevar("");
+      await carregarOrdensNuvem();
+    } catch (err) {
+      console.error(err);
+      setMensagem("Erro ao gerar OS na nuvem.");
+    }
     setTimeout(() => setMensagem(""), 3000);
   };
 
-  const alterarStatusOS = (id: number, novoStatus: "Aprovada" | "Em Andamento" | "Finalizado") => {
-    const novasOrdens = ordens.map(os => 
-      os.id === id ? { ...os, status: novoStatus } : os
-    );
-    setOrdens(novasOrdens);
-    localStorage.setItem("ordens_servico", JSON.stringify(novasOrdens));
+  const alterarStatusOS = async (id: number, novoStatus: "Aprovada" | "Em Andamento" | "Finalizado") => {
+    try {
+      const { error } = await supabase.from("ordens_servico").update({ status: novoStatus }).eq("id", id);
+      if (error) throw error;
+      await carregarOrdensNuvem();
+    } catch (err) {
+      alert("Erro ao alterar o status na nuvem.");
+    }
   };
 
-  const apagarOS = (id: number) => {
-    if (window.confirm("Tem certeza que deseja apagar esta OS permanentemente?")) {
-      const novasOrdens = ordens.filter(os => os.id !== id);
-      setOrdens(novasOrdens);
-      localStorage.setItem("ordens_servico", JSON.stringify(novasOrdens));
+  const apagarOS = async (id: number) => {
+    if (window.confirm("Tem certeza que deseja apagar esta OS permanentemente da nuvem?")) {
+      try {
+        const { error } = await supabase.from("ordens_servico").delete().eq("id", id);
+        if (error) throw error;
+        await carregarOrdensNuvem();
+      } catch (err) {
+        alert("Erro ao apagar a OS.");
+      }
     }
   };
 
   const imprimirOS = (os: OrdemServico) => {
     setOsParaImprimir(os);
-    setTimeout(() => {
-      window.print();
-    }, 200);
+    setTimeout(() => window.print(), 200);
   };
 
   const ordensFiltradas = ordens.filter(os => 
@@ -128,10 +151,9 @@ export default function OSPage() {
     os.id.toString().includes(busca)
   );
 
-  // Busca os dados atualizados do cliente na hora de imprimir
   const clienteImpressao = osParaImprimir ? clientes.find(c => c.id === osParaImprimir.clienteId) : null;
 
-  if (!montado) return <div className="w-full text-center py-12 text-slate-500 text-sm">A carregar OS...</div>;
+  if (!montado) return <div className="w-full text-center py-12 text-slate-500 text-sm">A carregar OS da nuvem...</div>;
 
   return (
     <>
@@ -143,11 +165,17 @@ export default function OSPage() {
       `}</style>
 
       <div className="w-full flex flex-col gap-6 print:hidden">
-        {/* FORMULÁRIO MANUAL OCULTO OU COMPACTO */}
+        
         <div className="bg-[#111827] border border-slate-800 rounded-lg p-4 shadow-sm">
-          <h2 className="text-slate-400 text-xs font-bold mb-3 uppercase tracking-wider flex items-center gap-2">
-            + Gerar OS Manualmente (Avulsa)
-          </h2>
+          <div className="flex justify-between items-center mb-3">
+            <h2 className="text-slate-400 text-xs font-bold uppercase tracking-wider flex items-center gap-2">
+              + Gerar OS Manualmente (Avulsa)
+            </h2>
+            <button onClick={carregarOrdensNuvem} className="bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] px-3 py-1.5 rounded border border-slate-700 transition-colors">
+              🔄 Atualizar da Nuvem
+            </button>
+          </div>
+          
           <form onSubmit={handleGerarOSManual} className="flex flex-col gap-2.5">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-2.5">
               <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 outline-none focus:border-blue-500">
@@ -165,12 +193,11 @@ export default function OSPage() {
               <textarea value={materiaisLevar} onChange={(e) => setMateriaisLevar(e.target.value)} rows={2} placeholder="Materiais a levar (Opcional)" className="bg-[#0b0f19] border border-slate-700 rounded-md py-1.5 px-3 text-xs text-slate-200 resize-none outline-none focus:border-blue-500"></textarea>
             </div>
 
-            <button type="submit" className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-2 rounded-md transition-colors uppercase">Gerar OS Manual</button>
-            {mensagem && <div className={`text-xs mt-1 text-center ${mensagem.includes("Selecione") ? "text-red-400" : "text-green-400"}`}>{mensagem}</div>}
+            <button type="submit" className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-bold py-2 rounded-md transition-colors uppercase">Gerar OS na Nuvem</button>
+            {mensagem && <div className={`text-xs mt-1 text-center ${mensagem.includes("Erro") || mensagem.includes("Selecione") ? "text-red-400" : "text-green-400"}`}>{mensagem}</div>}
           </form>
         </div>
 
-        {/* LISTA DE OS */}
         <div className="bg-[#111827] border border-slate-800 rounded-lg p-5">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <h3 className="text-slate-400 text-xs font-bold uppercase tracking-wider">
@@ -183,7 +210,7 @@ export default function OSPage() {
           </div>
           
           {ordens.length === 0 ? (
-            <div className="text-center py-6 text-slate-500 text-xs border border-dashed border-slate-800 rounded-md bg-[#0b0f19]">Nenhuma OS gerada até o momento. Aprove um orçamento para aparecer aqui.</div>
+            <div className="text-center py-6 text-slate-500 text-xs border border-dashed border-slate-800 rounded-md bg-[#0b0f19]">Nenhuma OS gerada até o momento.</div>
           ) : (
             <div className="flex flex-col gap-2">
               {ordensFiltradas.map(os => (
@@ -206,7 +233,6 @@ export default function OSPage() {
                   </div>
                   
                   <div className="flex flex-wrap sm:flex-col gap-2 h-fit self-end sm:self-center">
-                    {/* BOTÕES DE STATUS PROGRESSIVO */}
                     {os.status === "Aprovada" && (
                       <button onClick={() => alterarStatusOS(os.id, "Em Andamento")} className="text-amber-400 hover:text-amber-300 text-xs font-bold bg-amber-950/30 px-3 py-1.5 rounded border border-amber-900/50 hover:bg-amber-900/40 transition-colors whitespace-nowrap">
                         ▶️ Iniciar Serviço
@@ -237,34 +263,24 @@ export default function OSPage() {
         </div>
       </div>
 
-      {/* IMPRESSÃO OS CENTRALIZADA (VISÍVEL APENAS NA IMPRESSÃO) */}
       {osParaImprimir && (
         <div className="hidden print:block print:bg-white print:text-black w-full min-h-screen font-sans">
           <div className="border-2 border-black p-8 rounded-lg max-w-4xl mx-auto mt-8">
-            
             <div className="flex flex-col items-center border-b-2 border-black pb-4 mb-6 text-center">
-              {logoUrl ? (
-                <img src={logoUrl} alt="Logo" className="h-24 object-contain mb-2" />
-              ) : (
-                <h1 className="text-3xl font-black uppercase tracking-tight mb-2">SOS CASA DE PRAIA</h1>
-              )}
+              {/* IMAGEM FIXA DA LOGO NA IMPRESSÃO DA OS */}
+              <img src="/logo.jpg" alt="Logo SOS Casa de Praia" className="h-24 object-contain mb-2" />
               <div className="text-[11px] font-bold text-gray-700 mb-4 bg-gray-100 px-4 py-1.5 rounded-full border border-gray-300 print:border-black">
                 CNPJ: 38.250.620.0001-07 | Contato / WhatsApp: (13) 98131-1644
               </div>
-
               <h2 className="text-2xl font-black tracking-widest text-gray-800 uppercase">Ordem de Serviço</h2>
               <p className="text-sm font-mono text-gray-600 font-bold mt-1">Nº OS-{osParaImprimir.id.toString().slice(-4)} • Documento de Execução</p>
-              <div className="mt-3 inline-block bg-black text-white px-4 py-1 font-bold tracking-widest uppercase rounded">
-                OS {osParaImprimir.status}
-              </div>
+              <div className="mt-3 inline-block bg-black text-white px-4 py-1 font-bold tracking-widest uppercase rounded">OS {osParaImprimir.status}</div>
             </div>
             
             <div className="grid grid-cols-3 gap-x-8 gap-y-6 mb-8">
               <div className="bg-gray-100 p-3 rounded border border-gray-300">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Cliente</p>
                 <p className="text-lg font-bold uppercase">{osParaImprimir.clienteNome}</p>
-
-                {/* NOVO BLOCO: Mostra os dados do cliente se existirem */}
                 {clienteImpressao && (clienteImpressao.telefone || clienteImpressao.cnpjCpf || clienteImpressao.email) && (
                   <div className="mt-2 pt-2 border-t border-gray-300 text-sm text-gray-700 flex flex-col gap-0.5">
                     {clienteImpressao.telefone && <p><span className="font-bold text-gray-900">Tel:</span> {clienteImpressao.telefone}</p>}
@@ -280,9 +296,7 @@ export default function OSPage() {
               <div className="bg-gray-100 p-3 rounded border border-gray-300">
                 <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Data de Execução</p>
                 <p className="text-lg font-bold uppercase">
-                  {osParaImprimir.dataAgendamento 
-                    ? `${osParaImprimir.dataAgendamento.split('-').reverse().join('/')} ${osParaImprimir.horaAgendamento}`
-                    : osParaImprimir.dataCriacao}
+                  {osParaImprimir.dataAgendamento ? `${osParaImprimir.dataAgendamento.split('-').reverse().join('/')} ${osParaImprimir.horaAgendamento}` : osParaImprimir.dataCriacao}
                 </p>
               </div>
             </div>
@@ -294,22 +308,12 @@ export default function OSPage() {
               <div className="border border-gray-400 p-5 min-h-[250px] whitespace-pre-wrap text-sm leading-relaxed rounded-b bg-gray-50">
                 {osParaImprimir.descricao}
               </div>
-              <p className="text-[10px] text-gray-500 mt-2 italic text-right">* Este documento destina-se apenas à execução técnica e não possui validade financeira.</p>
             </div>
 
             <div className="mt-16 flex justify-between px-10">
-              <div className="text-center w-64">
-                <div className="border-t-2 border-black mb-2"></div>
-                <p className="text-sm font-bold uppercase">{osParaImprimir.clienteNome}</p>
-                <p className="text-xs text-gray-600">Assinatura do Cliente / Recebedor</p>
-              </div>
-              <div className="text-center w-64">
-                <div className="border-t-2 border-black mb-2"></div>
-                <p className="text-sm font-bold uppercase">{osParaImprimir.tecnicoNome}</p>
-                <p className="text-xs text-gray-600">Assinatura do Técnico Executante</p>
-              </div>
+              <div className="text-center w-64"><div className="border-t-2 border-black mb-2"></div><p className="text-sm font-bold uppercase">{osParaImprimir.clienteNome}</p><p className="text-xs text-gray-600">Assinatura do Cliente</p></div>
+              <div className="text-center w-64"><div className="border-t-2 border-black mb-2"></div><p className="text-sm font-bold uppercase">{osParaImprimir.tecnicoNome}</p><p className="text-xs text-gray-600">Assinatura do Técnico</p></div>
             </div>
-
           </div>
         </div>
       )}
