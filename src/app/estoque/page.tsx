@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "../lib/supabase"; // Caminho correto para o lib/supabase a partir de src/app/estoque
+import { supabase } from "../lib/supabase"; 
 
 interface Produto {
   id: number;
@@ -41,9 +41,15 @@ export default function EstoquePage() {
         .order("id", { ascending: false });
 
       if (!error && data) {
-        setProdutos(data);
-        // Guarda cache local para compatibilidade com orçamentos se necessário
-        localStorage.setItem("estoque_cadastrado", JSON.stringify(data));
+        const produtosFormatados: Produto[] = data.map((p: any) => ({
+          id: p.id,
+          nome: p.nome,
+          quantidade: p.quantidade,
+          precoVenda: p.preco_venda // Mapeia da base de dados para o sistema
+        }));
+        
+        setProdutos(produtosFormatados);
+        localStorage.setItem("estoque_cadastrado", JSON.stringify(produtosFormatados));
       }
     } catch (err) {
       console.error("Erro ao carregar estoque da nuvem:", err);
@@ -57,17 +63,18 @@ export default function EstoquePage() {
       return;
     }
 
-    const dadosProduto = {
+    // A CORREÇÃO ESTÁ AQUI: Envia para o Supabase como preco_venda
+    const dadosProdutoNuvem = {
       nome: nome.trim(),
       quantidade: quantidade.trim(),
-      precoVenda: precoVenda.trim()
+      preco_venda: precoVenda.trim() 
     };
 
     try {
       if (produtoEditandoId !== null) {
         const { error } = await supabase
           .from("estoque")
-          .update(dadosProduto)
+          .update(dadosProdutoNuvem)
           .eq("id", produtoEditandoId);
 
         if (error) throw error;
@@ -77,7 +84,7 @@ export default function EstoquePage() {
         const novoId = Date.now();
         const { error } = await supabase
           .from("estoque")
-          .insert([{ id: novoId, ...dadosProduto }]);
+          .insert([{ id: novoId, ...dadosProdutoNuvem }]);
 
         if (error) throw error;
         setMensagem(`Produto "${nome}" cadastrado na nuvem com sucesso!`);
