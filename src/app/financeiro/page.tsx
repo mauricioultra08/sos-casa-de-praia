@@ -66,6 +66,16 @@ export default function FinanceiroPage() {
   const [statusBaixa, setStatusBaixa] = useState<"Pago" | "Em Aberto">("Pago");
   const [vencimentoBaixa, setVencimentoBaixa] = useState("");
 
+  // ESTADOS - EDIÇÃO PROTEGIDA (NOVO)
+  const [modalPinAberto, setModalPinAberto] = useState<Transacao | null>(null);
+  const [pinEdit, setPinEdit] = useState("");
+  const [erroPinEdit, setErroPinEdit] = useState("");
+  
+  const [transacaoParaEditar, setTransacaoParaEditar] = useState<Transacao | null>(null);
+  const [editDescricao, setEditDescricao] = useState("");
+  const [editValor, setEditValor] = useState("");
+  const [editTipo, setEditTipo] = useState<"Entrada" | "Saída">("Entrada");
+
   const hoje = new Date();
   const anoAtual = hoje.getFullYear();
   const mesAtual = hoje.getMonth();
@@ -97,7 +107,7 @@ export default function FinanceiroPage() {
       const orcSalvos: Orcamento[] = orcData ? orcData.map((o: any) => ({ id: o.id, clienteNome: o.cliente_nome, valorTotal: o.valor_total, status: o.status })) : [];
       const financSalvo: Transacao[] = financData ? financData.map((f: any) => ({
         id: f.id,
-        orcamentoId: f.os_id, // Usando os_id da tabela para guardar o ID do orçamento
+        orcamentoId: f.os_id,
         tipo: f.tipo,
         descricao: f.descricao,
         clienteNome: f.clienteNome || f.descricao.split(" - ")[1] || "",
@@ -133,7 +143,6 @@ export default function FinanceiroPage() {
             dataCriacao: new Date().toLocaleDateString("pt-BR")
           };
           novoFinanceiro.push(transacaoGerada);
-          // Grava a auto-gerada na nuvem
           inserirTransacaoNuvem(transacaoGerada);
           mudou = true;
         }
@@ -158,7 +167,6 @@ export default function FinanceiroPage() {
         valor: t.valor,
         data_registro: t.dataCriacao,
         os_id: t.orcamentoId || null,
-        // Usamos as colunas extras que adicionou (se der erro aqui, é porque faltam criar estas colunas text no supabase, avise-me)
         clienteNome: t.clienteNome,
         empresaParceira: t.empresaParceira,
         numeroCupom: t.numeroCupom,
@@ -184,7 +192,7 @@ export default function FinanceiroPage() {
 
   const imprimirRelatorio = () => window.print();
 
-  // HANDLER: Lançamento Completo (Com divisões e Cupom)
+  // HANDLER: Lançamento Completo
   const handleLancamentoManual = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!descManual.trim()) { setMensagemManual("Preencha a descrição."); return; }
@@ -219,7 +227,7 @@ export default function FinanceiroPage() {
     setMensagemManual("Lançamento registado com sucesso!"); setTimeout(() => setMensagemManual(""), 3000);
   };
 
-  // HANDLER: Lançamento Despesa Avulsa (Rápida)
+  // HANDLER: Lançamento Despesa Avulsa
   const handleDespesaAvulsa = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!descAvulsa.trim() || parseMoeda(valorAvulsa) === 0) {
@@ -277,6 +285,62 @@ export default function FinanceiroPage() {
       await supabase.from("financeiro").delete().eq("id", Math.floor(id));
     } 
   };
+
+  // ----- FUNÇÕES DE EDIÇÃO PROTEGIDA (NOVO) -----
+  const iniciarEdicaoProtegida = (t: Transacao) => {
+    setModalPinAberto(t);
+    setPinEdit("");
+    setErroPinEdit("");
+  };
+
+  const validarPinMaster = () => {
+    const pinCorreto = localStorage.getItem("pin_master") || "123456";
+    if (pinEdit === pinCorreto && modalPinAberto) {
+      setTransacaoParaEditar(modalPinAberto);
+      setEditDescricao(modalPinAberto.descricao);
+      setEditValor(modalPinAberto.valor);
+      setEditTipo(modalPinAberto.tipo);
+      setModalPinAberto(null);
+    } else {
+      setErroPinEdit("PIN Master incorreto!");
+    }
+  };
+
+  const salvarEdicaoCompleta = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!transacaoParaEditar) return;
+    
+    const valorValidado = editValor.replace(",", ".");
+    if (isNaN(Number(valorValidado))) {
+      alert("Valor inválido. Utilize apenas números e vírgula.");
+      return;
+    }
+
+    try {
+      // 1. Atualiza no Supabase
+      const { error } = await supabase.from("financeiro").update({
+        descricao: editDescricao.trim(),
+        valor: valorValidado,
+        tipo: editTipo
+      }).eq("id", Math.floor(transacaoParaEditar.id));
+
+      if (error) throw error;
+
+      // 2. Atualiza localmente
+      const novaLista = transacoes.map(t => 
+        t.id === transacaoParaEditar.id 
+          ? { ...t, descricao: editDescricao.trim(), valor: valorValidado.replace(".", ","), tipo: editTipo }
+          : t
+      );
+      setTransacoes(novaLista);
+      setTransacaoParaEditar(null);
+      
+    } catch (err) {
+      alert("Erro ao salvar as edições na nuvem.");
+      console.error(err);
+    }
+  };
+  // ---------------------------------------------
 
   // MATEMÁTICA AUTOMÁTICA GERAL
   const faturamentoTotal = transacoes.filter(t => t.tipo === "Entrada" && t.status === "Pago").reduce((a, t) => a + parseMoeda(t.valor), 0);
@@ -762,7 +826,10 @@ export default function FinanceiroPage() {
                     <span className={`text-base font-bold ${t.tipo === 'Entrada' ? 'text-green-400 print:text-green-700' : 'text-red-400 print:text-red-700'}`}>
                       {t.tipo === 'Entrada' ? '+' : '-'} R$ {t.valor}
                     </span>
-                    <button onClick={() => apagarTransacao(t.id)} className="print:hidden text-[10px] text-slate-500 hover:text-red-400 mt-2 px-2 py-1 bg-red-950/20 rounded transition-colors">✖ Apagar</button>
+                    <div className="flex gap-2 mt-2 print:hidden">
+                      <button onClick={() => iniciarEdicaoProtegida(t)} className="text-[10px] text-amber-500 hover:text-amber-400 px-2 py-1 bg-amber-950/20 rounded transition-colors">✏️ Editar</button>
+                      <button onClick={() => apagarTransacao(t.id)} className="text-[10px] text-slate-500 hover:text-red-400 px-2 py-1 bg-red-950/20 rounded transition-colors">✖ Apagar</button>
+                    </div>
                   </div>
                 </div>
 
@@ -814,6 +881,65 @@ export default function FinanceiroPage() {
           </div>
         )}
       </div>
+
+      {/* MODAL 1: VALIDAR PIN MASTER PARA EDIÇÃO */}
+      {modalPinAberto && (
+        <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm print:hidden">
+          <div className="bg-[#111827] border border-slate-700 w-full max-w-xs rounded-xl p-6 shadow-2xl flex flex-col gap-4 text-center">
+            <h3 className="text-amber-400 font-bold uppercase tracking-widest text-sm mb-2 border-b border-slate-800 pb-2">Acesso Master</h3>
+            <p className="text-xs text-slate-400 mb-2">Digite o PIN Master para ter permissão de corrigir os valores deste registo.</p>
+            
+            <input
+              type="password"
+              value={pinEdit}
+              onChange={e => setPinEdit(e.target.value)}
+              placeholder="••••••"
+              className="bg-[#0b0f19] border border-slate-700 rounded-md py-3 px-3 text-center text-lg font-bold tracking-[0.5em] text-amber-400 outline-none focus:border-amber-500"
+              autoFocus
+            />
+            
+            {erroPinEdit && <p className="text-red-400 text-xs font-bold bg-red-950/40 py-1 rounded">{erroPinEdit}</p>}
+            
+            <div className="flex gap-2 mt-2">
+              <button onClick={() => { setModalPinAberto(null); setErroPinEdit(""); }} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded text-xs font-bold transition-colors">Cancelar</button>
+              <button onClick={validarPinMaster} className="flex-1 bg-amber-600 hover:bg-amber-700 text-white py-2.5 rounded text-xs font-bold transition-colors">Validar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL 2: FORMULÁRIO DE EDIÇÃO LIVRE */}
+      {transacaoParaEditar && (
+        <div className="fixed inset-0 z-[60] bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm print:hidden">
+          <div className="bg-[#111827] border border-slate-700 w-full max-w-sm rounded-xl p-6 shadow-2xl flex flex-col gap-4">
+            <h2 className="text-blue-500 font-black uppercase tracking-widest border-b border-slate-800 pb-2">✏️ Correção de Registo</h2>
+
+            <form onSubmit={salvarEdicaoCompleta} className="flex flex-col gap-3">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Tipo de Transação</label>
+                <select value={editTipo} onChange={e => setEditTipo(e.target.value as "Entrada"|"Saída")} className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-xs text-slate-200 outline-none focus:border-blue-500 w-full font-bold">
+                  <option value="Entrada">Entrada (Receita / Soma)</option>
+                  <option value="Saída">Saída (Despesa / Subtrai)</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Descrição</label>
+                <input type="text" value={editDescricao} onChange={e => setEditDescricao(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-xs text-slate-200 outline-none focus:border-blue-500 w-full" />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Valor Total (R$) *</label>
+                <input type="text" value={editValor} onChange={e => setEditValor(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-sm font-bold tracking-wider outline-none w-full text-green-400 focus:border-green-500" />
+              </div>
+
+              <div className="flex gap-2 mt-3">
+                <button type="button" onClick={() => setTransacaoParaEditar(null)} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded-md text-xs font-bold uppercase transition-colors border border-slate-700">Cancelar</button>
+                <button type="submit" className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2.5 rounded-md text-xs font-bold uppercase shadow-lg transition-colors">Salvar Edição</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

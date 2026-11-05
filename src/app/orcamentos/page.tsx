@@ -6,12 +6,14 @@ import { supabase } from "../lib/supabase";
 
 interface Cliente { id: number; nome: string; telefone?: string; email?: string; cnpjCpf?: string; }
 interface Produto { id: number; nome: string; quantidade: string; precoVenda: string; }
+interface Tecnico { id: number; nome: string; }
 interface ItemOrcamento { produtoId: number; nome: string; quantidade: number; precoUnitario: number; subtotal: number; tipo: "produto" | "servico"; }
 interface Orcamento {
   id: number;
   clienteId: number;
   clienteNome: string;
   descricao: string;
+  garantia?: string;
   itens: ItemOrcamento[];
   valorTotal: string;
   status: "Pendente" | "Aprovado" | "Rejeitado";
@@ -24,12 +26,14 @@ export default function OrcamentosPage() {
 
   const [clientes, setClientes] = useState<Cliente[]>([]);
   const [estoque, setEstoque] = useState<Produto[]>([]);
+  const [tecnicos, setTecnicos] = useState<Tecnico[]>([]);
   const [orcamentos, setOrcamentos] = useState<Orcamento[]>([]);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
 
-  // Estados do formulário
+  // Estados do formulário de criação
   const [clienteId, setClienteId] = useState("");
   const [descricaoGeral, setDescricaoGeral] = useState("");
+  const [garantia, setGarantia] = useState("");
   const [itensSelecionados, setItensSelecionados] = useState<ItemOrcamento[]>([]);
   
   // Adicionar Item
@@ -43,6 +47,13 @@ export default function OrcamentosPage() {
   const [mensagem, setMensagem] = useState("");
   const [busca, setBusca] = useState("");
   const [orcamentoParaImprimir, setOrcamentoParaImprimir] = useState<Orcamento | null>(null);
+
+  // Estados do Modal de Aprovação / Agendamento
+  const [modalAprovacao, setModalAprovacao] = useState<Orcamento | null>(null);
+  const [tecnicoAgendamento, setTecnicoAgendamento] = useState("");
+  const [dataAgendamento, setDataAgendamento] = useState("");
+  const [horaAgendamento, setHoraAgendamento] = useState("");
+  const [erroModal, setErroModal] = useState("");
 
   useEffect(() => {
     setMontado(true);
@@ -68,6 +79,10 @@ export default function OrcamentosPage() {
           id: p.id, nome: p.nome, quantidade: p.quantidade, precoVenda: p.preco_venda || p.precoVenda
         })));
       }
+
+      const resTecnicos = await supabase.from("tecnicos").select("id, nome").eq("status", "Ativo");
+      if (resTecnicos.data) setTecnicos(resTecnicos.data);
+
     } catch (err) {
       console.error("Erro ao carregar base:", err);
     }
@@ -83,13 +98,13 @@ export default function OrcamentosPage() {
           clienteId: o.cliente_id,
           clienteNome: o.cliente_nome,
           descricao: o.descricao,
+          garantia: o.garantia || "",
           valorTotal: o.valor_total,
           status: o.status,
           dataCriacao: o.data_criacao,
           itens: typeof o.itens === 'string' ? JSON.parse(o.itens || "[]") : o.itens
         }));
         setOrcamentos(orcFormatados);
-        // CRUCIAL: Salvar no localStorage para o seu Financeiro ler corretamente as entradas geradas
         localStorage.setItem("orcamentos_cadastrados", JSON.stringify(orcFormatados));
       }
     } catch (err) {
@@ -104,43 +119,23 @@ export default function OrcamentosPage() {
 
     const precoNum = Number(produto.precoVenda.replace(",", "."));
     const qtdNum = Number(quantidadeItem);
-
-    const novoItem: ItemOrcamento = {
-      produtoId: produto.id,
-      nome: produto.nome,
-      quantidade: qtdNum,
-      precoUnitario: precoNum,
-      subtotal: precoNum * qtdNum,
-      tipo: "produto"
-    };
-
+    const novoItem: ItemOrcamento = { produtoId: produto.id, nome: produto.nome, quantidade: qtdNum, precoUnitario: precoNum, subtotal: precoNum * qtdNum, tipo: "produto" };
     setItensSelecionados([...itensSelecionados, novoItem]);
     setProdutoSelecionadoId(""); setQuantidadeItem("1");
   };
 
   const adicionarServico = () => {
     if (!nomeServico.trim() || !valorServico.trim()) return;
-    
     const valorNum = Number(valorServico.replace(",", "."));
     if (isNaN(valorNum) || valorNum <= 0) return;
 
-    const novoItem: ItemOrcamento = {
-      produtoId: Date.now(),
-      nome: `[SERVIÇO] ${nomeServico.trim()}`,
-      quantidade: 1,
-      precoUnitario: valorNum,
-      subtotal: valorNum,
-      tipo: "servico"
-    };
-
+    const novoItem: ItemOrcamento = { produtoId: Date.now(), nome: `[SERVIÇO] ${nomeServico.trim()}`, quantidade: 1, precoUnitario: valorNum, subtotal: valorNum, tipo: "servico" };
     setItensSelecionados([...itensSelecionados, novoItem]);
     setNomeServico(""); setValorServico("");
   };
 
   const removerItem = (index: number) => {
-    const novaLista = [...itensSelecionados];
-    novaLista.splice(index, 1);
-    setItensSelecionados(novaLista);
+    const novaLista = [...itensSelecionados]; novaLista.splice(index, 1); setItensSelecionados(novaLista);
   };
 
   const valorTotalOrcamento = itensSelecionados.reduce((acc, item) => acc + item.subtotal, 0);
@@ -158,6 +153,7 @@ export default function OrcamentosPage() {
       cliente_id: Number(clienteId),
       cliente_nome: clienteSelecionado?.nome || "Desconhecido",
       descricao: descricaoGeral.trim(),
+      garantia: garantia.trim(),
       itens: JSON.stringify(itensSelecionados),
       valor_total: valorTotalOrcamento.toFixed(2),
       status: "Pendente",
@@ -169,11 +165,10 @@ export default function OrcamentosPage() {
       if (error) throw error;
 
       setMensagem("Orçamento gerado na nuvem com sucesso!");
-      setClienteId(""); setDescricaoGeral(""); setItensSelecionados([]);
+      setClienteId(""); setDescricaoGeral(""); setGarantia(""); setItensSelecionados([]);
       await carregarOrcamentosNuvem();
     } catch (err) {
       setMensagem("Erro ao gerar orçamento.");
-      console.error(err);
     }
     setTimeout(() => setMensagem(""), 3000);
   };
@@ -185,62 +180,81 @@ export default function OrcamentosPage() {
     }
   };
 
-  const alterarStatus = async (id: number, novoStatus: "Pendente" | "Aprovado" | "Rejeitado") => {
+  // REJEITAR (Muda direto para rejeitado sem modal)
+  const rejeitarOrcamento = async (id: number) => {
     try {
-      // 1. Atualiza o status do Orçamento
-      const { error } = await supabase.from("orcamentos").update({ status: novoStatus }).eq("id", id);
-      if (error) throw error;
+      await supabase.from("orcamentos").update({ status: "Rejeitado" }).eq("id", id);
+      await carregarOrcamentosNuvem();
+      setMensagem("Orçamento rejeitado."); setTimeout(() => setMensagem(""), 3000);
+    } catch (err) { alert("Erro ao rejeitar orçamento."); }
+  };
+
+  // CONFIRMAR APROVAÇÃO E AGENDAR OS NO MODAL
+  const confirmarAprovacao = async () => {
+    if (!modalAprovacao) return;
+    if (!tecnicoAgendamento || !dataAgendamento || !horaAgendamento) {
+      setErroModal("Por favor, selecione o técnico, a data e a hora da instalação.");
+      return;
+    }
+
+    setErroModal("");
+    const tecSelecionado = tecnicos.find(t => t.id === Number(tecnicoAgendamento));
+    const orc = modalAprovacao;
+
+    try {
+      // 1. Atualiza status do Orçamento
+      const { error: erroOrc } = await supabase.from("orcamentos").update({ status: "Aprovado" }).eq("id", orc.id);
+      if (erroOrc) throw new Error("Falha ao mudar status do orçamento.");
       
-      if (novoStatus === "Aprovado") {
-        const orc = orcamentos.find(o => o.id === id);
-        if (orc) {
-          
-          // 2. GERA A ORDEM DE SERVIÇO NA NUVEM
-          let descFormatada = `[GERADO AUTOMATICAMENTE VIA ORÇAMENTO ORC-${orc.id.toString().slice(-4)}]\n\n`;
-          if (orc.descricao) {
-            descFormatada += `NOTAS DO ORÇAMENTO:\n${orc.descricao}\n\n`;
-          }
-          descFormatada += "ITENS E SERVIÇOS A EXECUTAR:\n";
-          orc.itens.forEach(item => {
-            descFormatada += `- ${item.quantidade}x ${item.nome}\n`;
-          });
+      // 2. Formatar Descrição da OS incluindo a Garantia
+      let descFormatada = `[GERADO VIA ORÇAMENTO ORC-${orc.id.toString().slice(-4)}]\n\n`;
+      if (orc.descricao) descFormatada += `NOTAS DO ORÇAMENTO:\n${orc.descricao}\n\n`;
+      if (orc.garantia) descFormatada += `GARANTIA ACORDADA:\n${orc.garantia}\n\n`;
+      
+      descFormatada += "ITENS E SERVIÇOS A EXECUTAR:\n";
+      if (orc.itens && Array.isArray(orc.itens)) {
+        orc.itens.forEach(item => { descFormatada += `- ${item.quantidade}x ${item.nome}\n`; });
+      }
 
-          const novaOSNuvem = {
-            id: Date.now(),
-            orcamento_id: orc.id,
-            cliente_id: orc.clienteId,
-            cliente_nome: orc.clienteNome,
-            tecnico_id: 0, // 0 = Sem técnico definido
-            tecnico_nome: "A Definir",
-            descricao: descFormatada,
-            status: "Aprovada",
-            data_criacao: new Date().toLocaleDateString("pt-BR")
-          };
-          
-          await supabase.from("ordens_servico").insert([novaOSNuvem]);
+      // 3. GERA A OS COM TÉCNICO E AGENDAMENTO
+      const novaOSNuvem = {
+        id: Date.now(),
+        orcamento_id: orc.id,
+        cliente_id: orc.clienteId,
+        cliente_nome: orc.clienteNome,
+        tecnico_id: tecSelecionado?.id,
+        tecnico_nome: tecSelecionado?.nome,
+        descricao: descFormatada,
+        status: "Aprovada", // Entra na fila do técnico
+        data_criacao: new Date().toLocaleDateString("pt-BR"),
+        data_agendamento: dataAgendamento, // Formato YYYY-MM-DD
+        hora_agendamento: horaAgendamento
+      };
+      
+      const { error: erroOS } = await supabase.from("ordens_servico").insert([novaOSNuvem]);
+      if (erroOS) throw new Error("Erro ao gerar a OS no Supabase.");
 
-          // 3. Dá baixa no Estoque Nuvem (Apenas produtos)
-          for (const item of orc.itens) {
-            if (item.tipo === "produto") {
-              const prod = estoque.find(p => p.id === item.produtoId);
-              if (prod) {
-                const novaQtd = (Number(prod.quantidade) - item.quantidade).toString();
-                await supabase.from("estoque").update({ quantidade: novaQtd }).eq("id", prod.id);
-              }
+      // 4. Dá baixa no Estoque
+      if (orc.itens && Array.isArray(orc.itens)) {
+        for (const item of orc.itens) {
+          if (item.tipo === "produto") {
+            const prod = estoque.find(p => p.id === item.produtoId);
+            if (prod) {
+              const novaQtd = (Number(prod.quantidade) - item.quantidade).toString();
+              await supabase.from("estoque").update({ quantidade: novaQtd }).eq("id", prod.id);
             }
           }
-          await carregarDadosBase(); 
         }
       }
       
-      // 4. Recarrega orçamentos e atualiza o localStorage para o Financeiro
+      await carregarDadosBase(); 
       await carregarOrcamentosNuvem();
-      setMensagem(`Orçamento marcado como ${novoStatus}! OS gerada com sucesso.`);
+      setModalAprovacao(null); setTecnicoAgendamento(""); setDataAgendamento(""); setHoraAgendamento("");
+      setMensagem(`Orçamento aprovado! OS agendada para ${tecSelecionado?.nome}.`);
       setTimeout(() => setMensagem(""), 4000);
       
-    } catch (err) {
-      alert("Erro ao processar aprovação.");
-      console.error(err);
+    } catch (err: any) {
+      setErroModal(err.message || "Erro desconhecido.");
     }
   };
 
@@ -281,12 +295,18 @@ export default function OrcamentosPage() {
           </h2>
           
           <form onSubmit={handleSalvarOrcamento} className="flex flex-col gap-4">
-            <div className="flex flex-col gap-1.5">
-              <label className="text-[11px] font-medium text-slate-400">Cliente *</label>
-              <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-xs text-slate-200 outline-none focus:border-blue-500">
-                <option value="">Selecione um cliente...</option>
-                {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
-              </select>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-medium text-slate-400">Cliente *</label>
+                <select value={clienteId} onChange={(e) => setClienteId(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-xs text-slate-200 outline-none focus:border-blue-500">
+                  <option value="">Selecione um cliente...</option>
+                  {clientes.map(c => <option key={c.id} value={c.id}>{c.nome}</option>)}
+                </select>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-[11px] font-medium text-slate-400">Garantia Oferecida (Opcional)</label>
+                <input type="text" value={garantia} onChange={(e) => setGarantia(e.target.value)} placeholder="Ex: 90 dias balcão, 1 ano nos equipamentos" className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-xs text-slate-200 outline-none focus:border-blue-500" />
+              </div>
             </div>
 
             <div className="flex flex-col gap-1.5">
@@ -392,10 +412,10 @@ export default function OrcamentosPage() {
                     <div className="flex gap-2 w-full sm:w-auto">
                       {orc.status === "Pendente" && (
                         <>
-                          <button onClick={() => alterarStatus(orc.id, "Aprovado")} className="flex-1 sm:flex-none text-emerald-400 bg-emerald-950/30 px-3 py-1.5 rounded border border-emerald-900/50 hover:bg-emerald-900/40 transition-colors text-xs font-bold whitespace-nowrap">
-                            ✅ Aprovar & Gerar OS
+                          <button onClick={() => setModalAprovacao(orc)} className="flex-1 sm:flex-none text-emerald-400 bg-emerald-950/30 px-3 py-1.5 rounded border border-emerald-900/50 hover:bg-emerald-900/40 transition-colors text-xs font-bold whitespace-nowrap">
+                            ✅ Aprovar & Agendar OS
                           </button>
-                          <button onClick={() => alterarStatus(orc.id, "Rejeitado")} className="flex-1 sm:flex-none text-red-400 bg-red-950/30 px-3 py-1.5 rounded border border-red-900/50 hover:bg-red-900/40 transition-colors text-xs font-bold whitespace-nowrap">
+                          <button onClick={() => rejeitarOrcamento(orc.id)} className="flex-1 sm:flex-none text-red-400 bg-red-950/30 px-3 py-1.5 rounded border border-red-900/50 hover:bg-red-900/40 transition-colors text-xs font-bold whitespace-nowrap">
                             ❌ Rejeitar
                           </button>
                         </>
@@ -415,6 +435,53 @@ export default function OrcamentosPage() {
         </div>
       </div>
 
+      {/* MODAL DE AGENDAMENTO (SOBREPOSIÇÃO) */}
+      {modalAprovacao && (
+        <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4 print:hidden backdrop-blur-sm">
+          <div className="bg-[#111827] border border-slate-700 w-full max-w-md rounded-xl p-6 shadow-2xl flex flex-col gap-4">
+            <div>
+              <h2 className="text-lg font-black text-emerald-400 uppercase tracking-widest border-b border-slate-800 pb-2 mb-4">
+                Confirmar & Agendar OS
+              </h2>
+              <p className="text-sm text-slate-300 font-bold mb-1">Cliente: {modalAprovacao.clienteNome}</p>
+              <p className="text-xs text-slate-500">Ao confirmar, a Ordem de Serviço será gerada e enviada diretamente para o telemóvel do técnico selecionado.</p>
+            </div>
+            
+            <div className="flex flex-col gap-3">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-400 mb-1">Selecione o Técnico *</label>
+                <select value={tecnicoAgendamento} onChange={(e) => setTecnicoAgendamento(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-sm text-slate-200 outline-none focus:border-emerald-500 w-full font-bold">
+                  <option value="">Escolha um técnico da equipa...</option>
+                  {tecnicos.map(t => <option key={t.id} value={t.id}>{t.nome}</option>)}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-400 mb-1">Data da Instalação *</label>
+                  <input type="date" value={dataAgendamento} onChange={(e) => setDataAgendamento(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-sm text-slate-200 outline-none focus:border-emerald-500 w-full" />
+                </div>
+                <div>
+                  <label className="block text-[11px] font-medium text-slate-400 mb-1">Hora (Aprox) *</label>
+                  <input type="time" value={horaAgendamento} onChange={(e) => setHoraAgendamento(e.target.value)} className="bg-[#0b0f19] border border-slate-700 rounded-md py-2 px-3 text-sm text-slate-200 outline-none focus:border-emerald-500 w-full" />
+                </div>
+              </div>
+            </div>
+
+            {erroModal && <div className="bg-red-950/50 border border-red-900/50 text-red-400 text-xs p-2 rounded text-center font-bold mt-2">{erroModal}</div>}
+
+            <div className="flex gap-3 mt-4">
+              <button onClick={() => { setModalAprovacao(null); setErroModal(""); }} className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 font-bold py-3 rounded-md transition-colors text-xs uppercase tracking-wider">
+                Cancelar
+              </button>
+              <button onClick={confirmarAprovacao} className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-md transition-colors text-xs uppercase tracking-wider shadow-lg">
+                🚀 Agendar OS
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* TELA DE IMPRESSÃO */}
       {orcamentoParaImprimir && (
         <div className="hidden print:block print:bg-white print:text-black w-full font-sans">
           <div className="border-2 border-black p-8 rounded-lg max-w-4xl mx-auto mt-4">
@@ -468,7 +535,13 @@ export default function OrcamentosPage() {
                   ))}
                 </tbody>
               </table>
-              <div className="flex justify-end mt-4">
+              <div className="flex justify-end mt-4 gap-4 items-end">
+                {orcamentoParaImprimir.garantia && (
+                  <div className="flex-1 bg-gray-100 p-3 rounded border border-black text-left">
+                    <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Garantia Oferecida</p>
+                    <p className="text-sm font-bold">{orcamentoParaImprimir.garantia}</p>
+                  </div>
+                )}
                 <div className="bg-gray-100 p-4 rounded border-2 border-black w-64 text-right">
                   <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-1">Valor Total</p>
                   <p className="text-2xl font-black">R$ {Number(orcamentoParaImprimir.valorTotal).toFixed(2).replace('.', ',')}</p>
